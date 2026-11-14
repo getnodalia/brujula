@@ -962,6 +962,11 @@ fn ai_section(view: &AiView) -> String {
             "La IA puede proponer una tarea que se haga sola («cada mañana mira Ágora»). Siempre te enseña qué hará, cuándo y qué sitios puede abrir, y no se guarda hasta que dices que sí. Una tarea solo lee esos sitios: no pulsa, no escribe, no inicia sesión ni ve tus pestañas. Solo se ejecuta con Brújula abierto.",
             &switch("ai.tasks", s.tasks),
         ),
+        row(
+            "Dejar que las tareas inicien sesión",
+            "Apagado por defecto. Encendido, una tarea puede entrar en un sitio con la contraseña que tengas guardada en el gestor de contraseñas de Brújula. La IA nunca ve la contraseña: la pone el navegador, solo en el sitio exacto de la tarea y solo si lo aceptaste al crearla. Si el sitio pide un código o una verificación, la tarea se detiene.",
+            &switch("ai.task_login", s.task_login),
+        ),
     ]
     .concat();
     let search = row(
@@ -2504,6 +2509,7 @@ mod tests {
             "ai.interact",
             "ai.organize",
             "ai.tasks",
+            "ai.task_login",
             "ai.search",
             "ai.blocked.add",
         ] {

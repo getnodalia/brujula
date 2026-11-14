@@ -141,6 +141,31 @@
   document.addEventListener('pointerdown', touched, true);
   document.addEventListener('keydown', touched, true);
 
+  // Signing in for a scheduled task. Only the browser can call this: it runs it in this world,
+  // with a login it chose itself, and the page cannot reach it. It fills the one login form of
+  // the page and sends it, and answers only whether it could, never what it filled.
+  window.__brujulaPwAuto = (u, p) => {
+    if (window !== window.top) return 'frame';
+    if (!(location.protocol === 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname))) return 'insecure';
+    const pws = passwords(document.body);
+    if (pws.length !== 1) return pws.length ? 'many' : 'none';
+    const pw = pws[0];
+    const form = pw.form || pw.closest('form');
+    if (!form) return 'none';
+    // The form must send what it holds to the page's own site (an input named "action" hides
+    // form.action, so the attribute is read).
+    try {
+      if (new URL(form.getAttribute('action') || location.href, location.href).origin !== location.origin) return 'action';
+    } catch (_) { return 'action'; }
+    const user = userFor(pw);
+    if (user) setValue(user, u);
+    setValue(pw, p);
+    const btn = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
+    if (btn && !btn.disabled) btn.click();
+    else form.requestSubmit();
+    return 'ok';
+  };
+
   // What was typed when a login form is sent.
   let last = '';
   let lastAt = 0;

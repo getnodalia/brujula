@@ -15,7 +15,7 @@ use super::*;
 
 use brujula_core::ai::organize::{self, Op};
 use brujula_core::ai::policy::{self, Call, Decision, Grant, Target};
-use brujula_core::ai::tasks::{self, Task, Tasks};
+use brujula_core::ai::tasks::{self, Task, TaskLogin, Tasks};
 use brujula_core::ai::wire::{self, Message, Part, Role, ToolCall};
 use brujula_core::ai::{page, prompt, AiSettings, Provider};
 use glib::translate::IntoGlib;
@@ -51,6 +51,8 @@ pub(super) struct AiState {
     outcome: RefCell<Option<Result<String, String>>>,
     /// Tabs the running task opened, so they are closed when it ends.
     task_tabs: RefCell<Vec<TabId>>,
+    /// The users the person was shown (and said yes to) for a task that signs in.
+    proposed_logins: RefCell<Vec<TaskLogin>>,
 }
 
 impl AiState {
@@ -82,6 +84,7 @@ impl AiState {
             running: RefCell::new(None),
             outcome: RefCell::new(None),
             task_tabs: RefCell::new(Vec::new()),
+            proposed_logins: RefCell::new(Vec::new()),
         }
     }
 }
@@ -397,8 +400,14 @@ impl Browser {
                 .unwrap_or_default();
             let (system, tools) = match self.ai.running.borrow().as_ref() {
                 Some(t) => (
-                    prompt::task_system(&t.name, &t.prompt, &t.hosts, &today),
-                    policy::task_specs(),
+                    prompt::task_system(
+                        &t.name,
+                        &t.prompt,
+                        &t.hosts,
+                        !t.logins.is_empty() && settings.task_login,
+                        &today,
+                    ),
+                    policy::task_specs(!t.logins.is_empty() && settings.task_login),
                 ),
                 None => (
                     prompt::system(&settings, &today, engine),
@@ -610,6 +619,7 @@ impl Browser {
             }
             policy::ORGANIZE => self.ai_organize(&settings, args),
             policy::SCHEDULE => self.ai_schedule(args),
+            policy::SIGN_IN => self.ai_sign_in(tab, run).await,
             policy::CLICK | policy::TYPE_TEXT => self.ai_act(call, tab, run).await,
             _ => Err("Herramienta desconocida".to_owned()),
         }
@@ -682,6 +692,16 @@ impl Browser {
         };
         let detail = if call.name == policy::ORGANIZE {
             self.ai_plan_text(&call.args)
+        } else if call.name == policy::SCHEDULE {
+            match self.ai_schedule_text(&call.args, &detail).await {
+                Ok(text) => text,
+                Err(why) => {
+                    self.ai
+                        .ui
+                        .add_note(&format!("Se impidió: {}", short_call(call, &why)));
+                    return Err(why);
+                }
+            }
         } else {
             detail
         };
@@ -1060,10 +1080,178 @@ impl Browser {
         r
     }
 
+    /// For a task that signs in: the user each site would use (the latest saved login), found
+    /// in the password manager, which is opened with the keyring if it is closed. These are
+    /// what the person is shown and what is kept if they say yes.
+    async fn ai_resolve_logins(
+        self: &Rc<Self>,
+        args: &serde_json::Value,
+    ) -> Result<Vec<TaskLogin>, String> {
+        let proposal = tasks::parse(args, 0)?;
+        if proposal.logins.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !self.ai_vault_open().await {
+            return Err(
+                "El gestor de contraseñas está bloqueado: el usuario tiene que desbloquearlo en Preferencias → Contraseñas"
+                    .to_owned(),
+            );
+        }
+        self.pw_read(|vault| {
+            let mut found = Vec::new();
+            for l in proposal.logins {
+                let user = vault
+                    .for_page(&format!("https://{}/", l.host))
+                    .first()
+                    .map(|login| login.username.clone())
+                    .filter(|u| !u.is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "No hay ninguna contraseña guardada de {} en el gestor de Brújula: el usuario tiene que entrar una vez en ese sitio y guardarla",
+                            l.host
+                        )
+                    })?;
+                found.push(TaskLogin { host: l.host, user });
+            }
+            Ok(found)
+        })
+        .ok_or("El gestor de contraseñas está cerrado")?
+    }
+
+    /// Opens the password manager if the keyring can, with no question; whether it is open.
+    async fn ai_vault_open(self: &Rc<Self>) -> bool {
+        let (tx, rx) = futures_channel::oneshot::channel();
+        self.pw_auto_open(Box::new(move |opened| {
+            let _ = tx.send(opened);
+        }));
+        rx.await.unwrap_or(false)
+    }
+
+    /// The question for a proposed task, with the user each sign-in would use.
+    async fn ai_schedule_text(
+        self: &Rc<Self>,
+        args: &serde_json::Value,
+        generic: &str,
+    ) -> Result<String, String> {
+        let logins = self.ai_resolve_logins(args).await?;
+        if logins.is_empty() {
+            return Ok(generic.to_owned());
+        }
+        let mut task = tasks::parse(args, 0)?;
+        task.logins.clone_from(&logins);
+        *self.ai.proposed_logins.borrow_mut() = logins;
+        let warning = if self.ai.session.borrow().tainted {
+            "\nLa IA leyó una página antes de proponer esto: mira bien los sitios."
+        } else {
+            ""
+        };
+        Ok(format!("{}{warning}", task.describe()))
+    }
+
+    /// Signs in on a tab of the running task: the browser takes the saved login the person
+    /// accepted and fills and sends the form itself. The assistant gets only whether it could.
+    async fn ai_sign_in(self: &Rc<Self>, tab: Option<TabId>, run: u64) -> Result<String, String> {
+        let id = tab.ok_or("No existe esa pestaña")?;
+        let view = self
+            .views
+            .borrow()
+            .get(&id)
+            .cloned()
+            .ok_or("No existe esa pestaña")?;
+        let url = view.uri().map(|u| u.to_string()).unwrap_or_default();
+        let host = policy::host_of(&url).unwrap_or_default();
+        let wanted = self
+            .ai
+            .running
+            .borrow()
+            .as_ref()
+            .and_then(|t| t.logins.iter().find(|l| l.host == host).cloned())
+            .ok_or("Esta tarea no puede iniciar sesión aquí")?;
+        if !self.ai_vault_open().await {
+            return Err(
+                "El gestor de contraseñas está bloqueado: el usuario tiene que desbloquearlo. Cuéntalo y termina."
+                    .to_owned(),
+            );
+        }
+        self.ai_wait_loaded(&view).await;
+        if self.ai_stale(run) {
+            return Err("Cancelado".to_owned());
+        }
+        // The page may have gone elsewhere while it loaded.
+        let now = view.uri().map(|u| u.to_string()).unwrap_or_default();
+        if policy::host_of(&now).as_deref() != Some(host.as_str()) {
+            return Err("La pestaña ya no está en ese sitio".to_owned());
+        }
+        let secret = self
+            .pw_read(|v| {
+                v.for_page(&now)
+                    .into_iter()
+                    .find(|l| l.username == wanted.user)
+                    .map(|l| {
+                        (
+                            l.username.clone(),
+                            zeroize::Zeroizing::new(l.password.clone()),
+                        )
+                    })
+            })
+            .flatten();
+        let Some((user, pass)) = secret else {
+            return Err(
+                "La contraseña guardada de esa tarea ya no está en el gestor de contraseñas"
+                    .to_owned(),
+            );
+        };
+        let script = zeroize::Zeroizing::new(format!(
+            "window.__brujulaPwAuto({}, {})",
+            serde_json::to_string(&user).unwrap_or_default(),
+            serde_json::to_string(&*pass).unwrap_or_default()
+        ));
+        drop(pass);
+        let value = view
+            .evaluate_javascript_future(&script, Some(super::passwords::WORLD), None)
+            .await
+            .map_err(|_| "No se pudo usar el formulario de esta página".to_owned())?;
+        drop(script);
+        match value.to_str().as_str() {
+            "ok" => {}
+            "none" => {
+                return Err("No hay un formulario de inicio de sesión en esta página".to_owned())
+            }
+            "many" => {
+                return Err("Hay más de un campo de contraseña: no se sabe cuál usar".to_owned())
+            }
+            "action" => {
+                return Err("El formulario envía los datos a otro sitio: no se rellena".to_owned())
+            }
+            "insecure" => return Err("La página no es segura (no es https)".to_owned()),
+            _ => return Err("No se pudo iniciar sesión en esta página".to_owned()),
+        }
+        // The form was sent: wait for the page it leads to.
+        glib::timeout_future(Duration::from_millis(1500)).await;
+        self.ai_wait_loaded(&view).await;
+        self.ai.ui.add_note(&format!(
+            "Inició sesión en {host} con la contraseña guardada (la IA no la ve)."
+        ));
+        Ok("Formulario enviado. Lee la página para ver si entró. Si pide un código, un captcha o dice que la contraseña es incorrecta, no sigas y cuéntalo.".to_owned())
+    }
+
     /// The model proposed a task and the user said yes: keep it.
     fn ai_schedule(self: &Rc<Self>, args: &serde_json::Value) -> Result<String, String> {
         let (now, _) = clock();
-        let task = tasks::parse(args, now)?;
+        let mut task = tasks::parse(args, now)?;
+        if !task.logins.is_empty() {
+            // The users that were shown to the person, for exactly the same sites.
+            let shown: Vec<TaskLogin> = self.ai.proposed_logins.borrow_mut().drain(..).collect();
+            let same = shown.len() == task.logins.len()
+                && task
+                    .logins
+                    .iter()
+                    .all(|l| shown.iter().any(|s| s.host == l.host));
+            if !same {
+                return Err("No se confirmó con qué usuario iniciar sesión".to_owned());
+            }
+            task.logins = shown;
+        }
         let when = task.schedule.describe();
         let id = self.tasks_edit(|t| t.add(task)).ok_or_else(|| {
             format!(
@@ -1114,7 +1302,11 @@ impl Browser {
             return;
         }
         self.ai_reset();
-        self.ai.session.borrow_mut().task_hosts = Some(task.hosts.clone());
+        {
+            let mut s = self.ai.session.borrow_mut();
+            s.task_hosts = Some(task.hosts.clone());
+            s.task_logins = task.logins.iter().map(|l| l.host.clone()).collect();
+        }
         *self.ai.running.borrow_mut() = Some(task.clone());
         *self.ai.outcome.borrow_mut() = None;
         self.ai.task_tabs.borrow_mut().clear();
@@ -1387,6 +1579,7 @@ impl Browser {
         switch(&pane.interact, "interact", "1", "0");
         switch(&pane.organize, "organize", "1", "0");
         switch(&pane.tasks, "tasks", "1", "0");
+        switch(&pane.task_login, "task_login", "1", "0");
         switch(&pane.search, "search", "1", "0");
 
         let add = {

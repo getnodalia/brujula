@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const SCHEDULE: &str = "schedule_task";
+/// The tool a task that may sign in is given: the browser fills the saved login, never the model.
+pub const SIGN_IN: &str = "sign_in";
 
 /// Tasks a profile can hold.
 pub const MAX_TASKS: usize = 12;
@@ -31,6 +33,13 @@ pub enum Schedule {
     Week { days: u8, h: u8, m: u8 },
 }
 
+/// A saved login a task may use on a site it names: the user, never the password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskLogin {
+    pub host: String,
+    pub user: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Task {
@@ -41,6 +50,8 @@ pub struct Task {
     /// The only sites it may open and read.
     pub hosts: Vec<String>,
     pub schedule: Schedule,
+    /// The sites where it may sign in with a login saved in the password manager, and as whom.
+    pub logins: Vec<TaskLogin>,
     pub enabled: bool,
     /// When it last ran, in seconds since 1970 (0 if never).
     pub last_run: u64,
@@ -56,6 +67,7 @@ impl Default for Task {
             prompt: String::new(),
             hosts: Vec::new(),
             schedule: Schedule::Day { h: 8, m: 0 },
+            logins: Vec::new(),
             enabled: true,
             last_run: 0,
             last_result: String::new(),
@@ -198,6 +210,26 @@ pub fn parse(args: &Value, now: u64) -> Result<Task, String> {
     if hosts.is_empty() || hosts.len() > MAX_HOSTS {
         return Err(format!("«sites» necesita entre 1 y {MAX_HOSTS} sitios"));
     }
+    // The sites where it may sign in: some of its own. The user is filled in by the app, from
+    // what the password manager has.
+    let mut logins: Vec<TaskLogin> = Vec::new();
+    for site in args["sign_in"].as_array().into_iter().flatten() {
+        let h = site
+            .as_str()
+            .and_then(crate::boosts::host_of)
+            .ok_or("Cada sitio de «sign_in» es una dirección como «agora.upm.es»")?;
+        if !hosts.contains(&h) {
+            return Err(format!(
+                "«sign_in» solo puede nombrar sitios de «sites»: {h}"
+            ));
+        }
+        if !logins.iter().any(|l| l.host == h) {
+            logins.push(TaskLogin {
+                host: h,
+                user: String::new(),
+            });
+        }
+    }
     let when = &args["when"];
     let schedule = match when["every"].as_str().unwrap_or_default() {
         "hours" => Schedule::Hours {
@@ -225,6 +257,7 @@ pub fn parse(args: &Value, now: u64) -> Result<Task, String> {
         prompt,
         hosts,
         schedule,
+        logins,
         // It starts counting now: a task made at noon does not run for a slot that was at eight.
         last_run: now,
         ..Task::default()
@@ -232,10 +265,34 @@ pub fn parse(args: &Value, now: u64) -> Result<Task, String> {
 }
 
 impl Task {
+    /// Whether it may sign in on `host`.
+    pub fn may_sign_in(&self, host: &str) -> bool {
+        self.logins.iter().any(|l| l.host == host)
+    }
+
     /// The task in words, for the question the user is asked before it is kept.
     pub fn describe(&self) -> String {
+        let access = if self.logins.is_empty() {
+            "No pulsa, no escribe, no inicia sesión y no ve tus pestañas.".to_owned()
+        } else {
+            let who: Vec<String> = self
+                .logins
+                .iter()
+                .map(|l| {
+                    if l.user.is_empty() {
+                        l.host.clone()
+                    } else {
+                        format!("{} como «{}»", l.host, l.user)
+                    }
+                })
+                .collect();
+            format!(
+                "Iniciará sesión en {} con la contraseña guardada en tu gestor de contraseñas: la IA nunca la ve. Si pide un código o una verificación, se detiene. No pulsa, no escribe nada más y no ve tus pestañas.",
+                who.join(", ")
+            )
+        };
         format!(
-            "«{}»\nQué hace: {}\nCuándo: {}\nSolo puede abrir y leer: {}\nNo pulsa, no escribe, no inicia sesión y no ve tus pestañas.",
+            "«{}»\nQué hace: {}\nCuándo: {}\nSolo puede abrir y leer: {}\n{access}",
             self.name,
             self.prompt,
             self.schedule.describe(),
@@ -264,6 +321,12 @@ impl Tasks {
                 .filter_map(|h| crate::boosts::host_of(h))
                 .take(MAX_HOSTS)
                 .collect();
+            let hosts = task.hosts.clone();
+            task.logins.retain_mut(|l| {
+                l.user = one_line(&l.user, 200);
+                hosts.contains(&l.host) && !l.user.is_empty()
+            });
+            task.logins.truncate(MAX_HOSTS);
             let fine = task.id != 0
                 && !seen.contains(&task.id)
                 && !task.name.is_empty()
@@ -455,6 +518,35 @@ mod tests {
         let s = Schedule::Hours { n: 6 };
         assert!(!s.due(1000 + 5 * 3600, 0, 1000));
         assert!(s.due(1000 + 6 * 3600, 0, 1000));
+    }
+
+    #[test]
+    fn signing_in_is_only_for_the_tasks_own_sites() {
+        let mut p = proposal();
+        p["sign_in"] = json!(["https://agora.upm.es/login"]);
+        let t = parse(&p, 0).unwrap();
+        assert_eq!(t.logins.len(), 1);
+        assert!(t.may_sign_in("agora.upm.es") && !t.may_sign_in("campus.example"));
+        assert!(t.describe().contains("nunca la ve"));
+        // A site that is not one of the task's is refused, not widened.
+        p["sign_in"] = json!(["otro.example"]);
+        assert!(parse(&p, 0).is_err());
+        p["sign_in"] = json!([3]);
+        assert!(parse(&p, 0).is_err());
+        // Without it, a task says it does not sign in.
+        assert!(parse(&proposal(), 0)
+            .unwrap()
+            .describe()
+            .contains("no inicia sesión"));
+    }
+
+    #[test]
+    fn a_stored_login_needs_a_user_and_one_of_the_tasks_sites() {
+        let json = r#"{"list":[{"id":1,"name":"a","prompt":"b","hosts":["a.example"],
+            "logins":[{"host":"a.example","user":"ana"},{"host":"b.example","user":"x"},{"host":"a.example","user":""}]}]}"#;
+        let t = Tasks::from_json(json);
+        assert_eq!(t.all()[0].logins.len(), 1);
+        assert_eq!(t.all()[0].logins[0].user, "ana");
     }
 
     #[test]

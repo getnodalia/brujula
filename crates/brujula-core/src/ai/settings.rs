@@ -143,6 +143,9 @@ pub struct AiSettings {
     /// The assistant may propose tasks that run on their own (each one is asked, and each can only
     /// read the sites it names).
     pub tasks: bool,
+    /// A task may sign in with a login saved in the password manager (the assistant never sees
+    /// the password). Off until the user turns it on.
+    pub task_login: bool,
     /// Sites the assistant never sees nor touches.
     pub blocked: Vec<String>,
 }
@@ -161,6 +164,7 @@ impl Default for AiSettings {
             interact: false,
             organize: true,
             tasks: true,
+            task_login: false,
             blocked: Vec::new(),
         }
     }
@@ -332,6 +336,7 @@ impl AiSettings {
             "interact" => self.interact = flag(value)?,
             "organize" => self.organize = flag(value)?,
             "tasks" => self.tasks = flag(value)?,
+            "task_login" => self.task_login = flag(value)?,
             "blocked.add" => {
                 let host = crate::boosts::host_of(value).ok_or("not a site")?;
                 if !self.blocked.contains(&host) && self.blocked.len() < MAX_BLOCKED {

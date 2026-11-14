@@ -31,7 +31,7 @@ pub const CLOSE_TAB: &str = "close_tab";
 pub const CLICK: &str = "click";
 pub const TYPE_TEXT: &str = "type_text";
 pub use super::organize::ORGANIZE;
-pub use super::tasks::SCHEDULE;
+pub use super::tasks::{SCHEDULE, SIGN_IN};
 
 /// How many tool calls one question may make, so a model that loops cannot go on forever.
 pub const MAX_STEPS: usize = 14;
@@ -102,7 +102,8 @@ pub fn specs(s: &AiSettings) -> Vec<ToolSpec> {
                 "name": {"type": "string", "description": "A short name"},
                 "prompt": {"type": "string", "description": "What to do and what to report, as instructions for yourself"},
                 "sites": {"type": "array", "maxItems": 5, "items": {"type": "string"}, "description": "Sites it may open, e.g. agora.upm.es"},
-                "when": {"type": "object"}
+                "when": {"type": "object"},
+                "sign_in": {"type": "array", "maxItems": 5, "items": {"type": "string"}, "description": "Only if the task needs the user to be signed in: those of `sites` where the browser may sign in with the password saved in the user's password manager. You never see the password; the browser fills it. Leave out if not needed."}
             }, "required": ["name", "prompt", "sites", "when"]}),
         });
     }
@@ -129,9 +130,10 @@ pub fn specs(s: &AiSettings) -> Vec<ToolSpec> {
     v
 }
 
-/// The tools a task is offered while it runs on its own: read the sites it names, nothing else.
-pub fn task_specs() -> Vec<ToolSpec> {
-    vec![
+/// The tools a task is offered while it runs on its own: read the sites it names, nothing else,
+/// and sign in where it was allowed to (`login`).
+pub fn task_specs(login: bool) -> Vec<ToolSpec> {
+    let mut v = vec![
         ToolSpec {
             name: OPEN_TAB,
             description: "Opens a page of one of the task's sites in a new tab. Returns the tab id; read it with read_page.",
@@ -153,7 +155,17 @@ pub fn task_specs() -> Vec<ToolSpec> {
                 "tab_id": {"type": "integer"}
             }, "required": ["tab_id"]}),
         },
-    ]
+    ];
+    if login {
+        v.push(ToolSpec {
+            name: SIGN_IN,
+            description: "Signs in on a tab you opened that shows a login form, with the password the user saved in the browser for that site. The browser fills and sends the form: you never see the password. Afterwards read the page to see whether it worked. If the site asks for a code, a captcha or any verification, do not go on: say so.",
+            parameters: json!({"type": "object", "properties": {
+                "tab_id": {"type": "integer"}
+            }, "required": ["tab_id"]}),
+        });
+    }
+    v
 }
 
 /// What the app should do about a request of the model.
@@ -198,6 +210,8 @@ pub struct Session {
     /// nothing else of the browser and nobody is there to answer a question, so whatever would
     /// ask is refused instead.
     pub task_hosts: Option<Vec<String>>,
+    /// The sites a running task may sign in on (exactly these hosts).
+    pub task_logins: Vec<String>,
 }
 
 /// The tab a call is about.
@@ -500,6 +514,10 @@ pub fn decide(
             }
             // The time is only known to the app; this reads the proposal to validate and show it.
             match super::tasks::parse(call.args, 0) {
+                Ok(task) if !task.logins.is_empty() && !s.task_login => Decision::Deny(
+                    "El usuario no deja que las tareas inicien sesión: propón la tarea sin «sign_in»"
+                        .to_owned(),
+                ),
                 Ok(task) => Decision::Ask {
                     title: "¿Crear esta tarea programada?".to_owned(),
                     // After reading a page, the proposal could be what that page asked for.
@@ -589,6 +607,33 @@ fn decide_task(
             Some(t) if session.opened.contains(&t.id) => Decision::Allow,
             _ => Decision::Deny("Solo puedes cerrar las pestañas que abriste tú".to_owned()),
         },
+        SIGN_IN => {
+            if !s.task_login {
+                return Decision::Deny(
+                    "El usuario no deja que las tareas inicien sesión".to_owned(),
+                );
+            }
+            let Some(t) = target else {
+                return Decision::Deny("No existe esa pestaña".to_owned());
+            };
+            if !session.opened.contains(&t.id) {
+                return Decision::Deny("Solo puedes iniciar sesión en tus pestañas".to_owned());
+            }
+            if visible(s, t.url).is_err() {
+                return Decision::Deny("Esta página no se puede usar".to_owned());
+            }
+            // Exactly the host that was named when the user said yes: not a subdomain, not a
+            // page the tab was sent to.
+            let host = host_of(t.url).unwrap_or_default();
+            if session.task_logins.contains(&host) {
+                Decision::Allow
+            } else {
+                Decision::Deny(format!(
+                    "Esta tarea no puede iniciar sesión en {host}; solo en: {}",
+                    session.task_logins.join(", ")
+                ))
+            }
+        }
         _ => Decision::Deny(
             "Una tarea programada solo puede abrir y leer los sitios que nombra".to_owned(),
         ),
@@ -1057,7 +1102,77 @@ mod tests {
             None,
         );
         assert!(matches!(d, Decision::Deny(_)));
-        let names: Vec<_> = task_specs().iter().map(|t| t.name).collect();
+        let names: Vec<_> = task_specs(false).iter().map(|t| t.name).collect();
         assert_eq!(names, vec![OPEN_TAB, READ_PAGE, CLOSE_TAB]);
+        let names: Vec<_> = task_specs(true).iter().map(|t| t.name).collect();
+        assert_eq!(names, vec![OPEN_TAB, READ_PAGE, CLOSE_TAB, SIGN_IN]);
+    }
+
+    #[test]
+    fn signing_in_needs_the_switch_the_task_and_the_exact_site() {
+        let mut s = on();
+        s.task_login = true;
+        let mut session = task_session(&["agora.upm.es", "login.upm.es"]);
+        session.task_logins = vec!["agora.upm.es".to_owned()];
+        session.opened.insert(4);
+        let args = json!({"tab_id": 4});
+        let go = |s: &AiSettings, session: &Session, url: &str, id: u64| {
+            decide(s, session, &call(SIGN_IN, &args), Some(tab(id, url)))
+        };
+        assert_eq!(
+            go(&s, &session, "https://agora.upm.es/login", 4),
+            Decision::Allow
+        );
+        // The tab was sent somewhere else, or to a subdomain: no.
+        for url in [
+            "https://login.upm.es/",
+            "https://x.agora.upm.es/",
+            "https://evil.example/",
+        ] {
+            assert!(
+                matches!(go(&s, &session, url, 4), Decision::Deny(_)),
+                "{url}"
+            );
+        }
+        // Not a tab the task opened.
+        assert!(matches!(
+            go(&s, &session, "https://agora.upm.es/", 9),
+            Decision::Deny(_)
+        ));
+        // The switch was turned off after the task was made.
+        s.task_login = false;
+        assert!(matches!(
+            go(&s, &session, "https://agora.upm.es/", 4),
+            Decision::Deny(_)
+        ));
+        // Outside a task it does not exist at all.
+        let mut s = on();
+        s.task_login = true;
+        let d = decide(
+            &s,
+            &Session::default(),
+            &call(SIGN_IN, &args),
+            Some(tab(4, "https://agora.upm.es/")),
+        );
+        assert!(matches!(d, Decision::Deny(_)));
+    }
+
+    #[test]
+    fn a_proposal_that_signs_in_needs_the_switch() {
+        let mut s = on();
+        let session = Session::default();
+        let args = json!({
+            "name": "Ágora", "prompt": "Mira las notas", "sites": ["agora.upm.es"],
+            "sign_in": ["agora.upm.es"], "when": {"every": "day", "at": "08:30"}
+        });
+        assert!(matches!(
+            decide(&s, &session, &call(SCHEDULE, &args), None),
+            Decision::Deny(_)
+        ));
+        s.task_login = true;
+        assert!(matches!(
+            decide(&s, &session, &call(SCHEDULE, &args), None),
+            Decision::Ask { .. }
+        ));
     }
 }
