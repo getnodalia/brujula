@@ -18,7 +18,7 @@ Solo lo que le das y lo que el panel muestra en la línea «Puede ver…»:
 | Buscar en la web | la consulta | nunca pregunta: abre una pestaña con tu buscador |
 | Abrir / cambiar / cerrar pestaña | una dirección | por defecto sin preguntar (se puede cambiar a «Preguntar siempre»); una dirección que no salía en lo que leyó se pregunta siempre; solo cierra las pestañas que abrió ella |
 | Organizar pestañas (fijar, mover, carpetas, espacios, cerrar) | los números de las pestañas y los nombres que ponga | sin preguntar, salvo que el plan cierre pestañas: entonces enseña la lista y pregunta (Ctrl+Mayús+T recupera las cerradas); se apaga en los ajustes |
-| Proponer una tarea programada | nombre, qué hacer, sitios y horario | **siempre** pregunta, enseñando todo; se apaga en los ajustes. Ver «Tareas programadas» |
+| Proponer una tarea programada | nombre, qué hacer, sitios, horario y, si lo permites, dónde iniciar sesión (nunca la contraseña) | **siempre** pregunta, enseñando todo; se apaga en los ajustes. Ver «Tareas programadas» |
 | Pulsar / escribir en una página | el elemento y el texto | desactivado por defecto; si lo activas, **siempre** pregunta |
 
 Nunca se envían: contraseñas, campos de pago, campos ocultos, el valor de ningún campo de formulario, ventanas privadas, páginas `brujula://` ni `file:`, ni los sitios que excluyas. Las direcciones privadas (localhost, red local) no se pueden abrir desde la IA.
@@ -33,6 +33,16 @@ Una tarea se ejecuta sola, solo con Brújula abierto, cada vez que llega su hora
 - No ve tus pestañas, no busca, no pulsa, no escribe, no inicia sesión, no organiza y no crea otras tareas: lo demás se rechaza sin preguntar, porque nadie está mirando.
 - Cierra las pestañas que abrió y guarda lo que encontró con la tarea; si el panel está abierto lo ves ahí, y si no, sale un aviso del escritorio.
 - Lo que lee se envía al proveedor que elegiste, igual que en una conversación. En Ajustes del asistente ves cada tarea con su último resultado, y puedes activarla o apagarla, ejecutarla ya o borrarla.
+
+### Tareas que inician sesión (apagado por defecto)
+
+Para cosas como «entra en Ágora y mira las asignaturas», en los ajustes del asistente se enciende «Dejar que inicien sesión». Entonces la IA puede proponer una tarea con `sign_in` para alguno de sus sitios. La tarjeta de confirmación dice **con qué usuario** iniciará sesión (el último guardado para ese sitio en el gestor de contraseñas de Brújula; si no hay ninguno, no se propone: entra una vez en el sitio y guárdalo).
+
+- **La IA nunca ve la contraseña ni la pide.** Solo llama a `sign_in` con el número de la pestaña; el navegador toma la contraseña de la bóveda, rellena el formulario en su mundo JavaScript aislado (la página no puede llamar a esa función) y lo envía. La IA recibe únicamente «formulario enviado»; luego lee la página, como en cualquier tarea.
+- Solo en el sitio exacto que dijiste (ni subdominios ni la página a la que se haya redirigido la pestaña), en una pestaña que abrió la propia tarea y por `https`. Si hay más de un campo de contraseña o el formulario envía los datos a otro sitio, no rellena.
+- No automatiza verificaciones: nunca usa los códigos de un solo uso (2FA) del gestor, y si el sitio pide un código, un captcha o rechaza la contraseña, la tarea se detiene y lo cuenta en el resultado.
+- Si la bóveda está bloqueada y el llavero no la abre, no se pregunta nada (nadie está mirando): la tarea falla con ese aviso. Desbloquéala en Preferencias → Contraseñas.
+- Apagar el interruptor frena en seco las tareas que ya iniciaban sesión.
 
 ## Seguridad
 

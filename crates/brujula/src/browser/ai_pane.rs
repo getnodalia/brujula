@@ -44,6 +44,7 @@ pub(super) struct AiPane {
     pub interact: gtk::Switch,
     pub organize: gtk::Switch,
     pub tasks: gtk::Switch,
+    pub task_login: gtk::Switch,
     tasks_list: gtk::Box,
     pub search: gtk::Switch,
     pub blocked_entry: gtk::Entry,
@@ -165,6 +166,7 @@ impl AiPane {
         let interact = gtk::Switch::new();
         let organize = gtk::Switch::new();
         let tasks = gtk::Switch::new();
+        let task_login = gtk::Switch::new();
         let tasks_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let search = gtk::Switch::new();
         let confirm_row = switch_row(
@@ -249,6 +251,11 @@ impl AiPane {
             "Las confirmas tú. Solo leen los sitios que nombran, con Brújula abierto",
             &tasks,
         ));
+        list.append(&switch_row(
+            "Dejar que inicien sesión",
+            "Con la contraseña que tengas guardada; la IA no la ve. Apagado por defecto",
+            &task_login,
+        ));
         list.append(&tasks_list);
         list.append(&heading("Buscador"));
         list.append(&switch_row(
@@ -290,6 +297,7 @@ impl AiPane {
             interact,
             organize,
             tasks,
+            task_login,
             tasks_list,
             search,
             blocked_entry,
@@ -353,6 +361,17 @@ impl AiPane {
                 &format!("{} · {}", task.schedule.describe(), task.hosts.join(", ")),
                 "brujula-ai-row-hint",
             ));
+            if !task.logins.is_empty() {
+                let who: Vec<String> = task
+                    .logins
+                    .iter()
+                    .map(|l| format!("{} ({})", l.host, l.user))
+                    .collect();
+                card.append(&small(
+                    &format!("Inicia sesión en {}", who.join(", ")),
+                    "brujula-ai-row-hint",
+                ));
+            }
             let last = if task.last_result.is_empty() {
                 String::new()
             } else {
@@ -452,6 +471,7 @@ impl AiPane {
         self.interact.set_active(s.interact);
         self.organize.set_active(s.organize);
         self.tasks.set_active(s.tasks);
+        self.task_login.set_active(s.task_login);
         self.search.set_active(s.search);
 
         while let Some(child) = self.blocked_list.first_child() {

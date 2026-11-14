@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use webkit6::{javascriptcore, UserContentInjectedFrames, UserScript, UserScriptInjectionTime};
 use zeroize::Zeroizing;
 
-const WORLD: &str = "brujula-pw";
+pub(super) const WORLD: &str = "brujula-pw";
 const HANDLER: &str = "brujulaPw";
 const SCRIPT: &str = include_str!("passwords.js");
 /// The vault closes itself after this long without being used.
@@ -106,7 +106,7 @@ impl Browser {
     /// Opens the vault with the key in the system keyring, if there is one, with no question.
     /// `done` hears whether it is open. Not tried when the user turned the keyring off, locked
     /// the vault by hand or has no vault; the master password is the way in then.
-    fn pw_auto_open(self: &Rc<Self>, done: Done) {
+    pub(super) fn pw_auto_open(self: &Rc<Self>, done: Done) {
         if self.pw.vault.borrow().is_some() {
             return done(true);
         }
@@ -208,6 +208,12 @@ impl Browser {
                 this.pw_unlock(done);
             }
         }));
+    }
+
+    /// Reads the open vault, if it is open. The scheduled tasks use it to find the saved login
+    /// the browser signs in with; what is read never goes to the assistant.
+    pub(super) fn pw_read<R>(&self, f: impl FnOnce(&Vault) -> R) -> Option<R> {
+        self.pw.vault.borrow().as_ref().map(f)
     }
 
     fn vault_exists() -> bool {
