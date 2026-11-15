@@ -2942,6 +2942,8 @@ impl Browser {
                     "ndl-history-symbolic"
                 }
                 (Kind::Setting, _) => "ndl-settings-symbolic",
+                (Kind::Calc, _) => "ndl-plus-symbolic",
+                (Kind::Site, _) => "ndl-search-symbolic",
                 _ => "ndl-globe-symbolic",
             };
             let title = match (&s.kind, &s.action) {
@@ -3003,6 +3005,11 @@ impl Browser {
             Action::Go(url) => self.navigate(&url),
             Action::Settings(section) => self.open_settings(Some(&section)),
             Action::Ask(text) => self.ai_ask(&text),
+            Action::Copy(text) => {
+                self.window.clipboard().set_text(&text);
+                self.toast
+                    .flash("ndl-check-symbolic", &format!("Copiado: {text}"));
+            }
             Action::Command(name) => {
                 // After the Spotlight has gone, so the focus lands where the command works.
                 let window = self.window.clone();
