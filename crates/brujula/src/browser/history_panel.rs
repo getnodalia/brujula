@@ -1,11 +1,41 @@
-//! The history button: it slides the history in over the list of tabs in the sidebar (and back),
-//! or, with the tabs on top, drops it from the bar as a list. A click on a page opens it in a new
-//! tab. What the history keeps and how it is cleaned is in `history.rs`.
+//! The library button: it slides the library in over the list of tabs in the sidebar (and back),
+//! or, with the tabs on top, drops it from the bar as a list. The history is the first of its
+//! sections, beside the downloads, the screenshots and the archived tabs (Arc's Library): a click
+//! on a page opens it in a new tab, on a file opens it with its application. What the history
+//! keeps and how it is cleaned is in `history.rs`; the files are picked in `library.rs`.
 
 use super::*;
 
 /// How many pages the list shows.
 const SHOWN: usize = 200;
+/// How many files the downloads and the screenshots show.
+const SHOWN_FILES: usize = 60;
+
+/// What a row of the library does when it is clicked.
+#[derive(Clone)]
+enum Target {
+    /// A page of the history: opens in a new tab.
+    Page(String),
+    /// A download or a screenshot: opens with the application of its type.
+    File(std::path::PathBuf),
+    /// An archived tab: comes back in the space in front.
+    Archived(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    History,
+    Downloads,
+    Captures,
+    Archive,
+}
+
+const SECTIONS: [(Section, &str); 4] = [
+    (Section::History, "Historial"),
+    (Section::Downloads, "Descargas"),
+    (Section::Captures, "Capturas"),
+    (Section::Archive, "Archivo"),
+];
 
 /// The widgets of the history list.
 pub(super) struct HistoryUi {
@@ -21,8 +51,11 @@ pub(super) struct HistoryUi {
     search: gtk::SearchEntry,
     empty: gtk::Label,
     back: gtk::Button,
-    /// The page that each row of the list opens (`None` for a heading).
-    urls: RefCell<Vec<Option<String>>>,
+    /// What each row of the list does (`None` for a heading).
+    targets: RefCell<Vec<Option<Target>>>,
+    /// The section on show, and the buttons that choose it.
+    section: Cell<Section>,
+    choosers: Vec<(Section, gtk::ToggleButton)>,
 }
 
 fn history_icon() -> &'static str {
@@ -71,7 +104,7 @@ impl HistoryUi {
             .tooltip_text("Volver a las pestañas")
             .build();
         let title = gtk::Label::builder()
-            .label("Historial")
+            .label("Biblioteca")
             .xalign(0.0)
             .hexpand(true)
             .css_classes(["title-4"])
@@ -82,6 +115,26 @@ impl HistoryUi {
         head.set_margin_bottom(4);
         head.append(&back);
         head.append(&title);
+        // One button per section, linked: choosing one shows its list.
+        let chooser_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        chooser_row.add_css_class("linked");
+        chooser_row.set_margin_start(8);
+        chooser_row.set_margin_end(8);
+        chooser_row.set_margin_bottom(6);
+        let mut choosers: Vec<(Section, gtk::ToggleButton)> = Vec::new();
+        for (section, label) in SECTIONS {
+            let button = gtk::ToggleButton::builder()
+                .label(label)
+                .hexpand(true)
+                .active(section == Section::History)
+                .css_classes(["flat", "brujula-library-tab"])
+                .build();
+            if let Some((_, first)) = choosers.first() {
+                button.set_group(Some(first));
+            }
+            chooser_row.append(&button);
+            choosers.push((section, button));
+        }
         let search = gtk::SearchEntry::builder()
             .placeholder_text("Buscar en el historial")
             .margin_start(8)
@@ -111,6 +164,7 @@ impl HistoryUi {
         let pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pane.add_css_class("brujula-history");
         pane.append(&head);
+        pane.append(&chooser_row);
         pane.append(&search);
         pane.append(&empty);
         pane.append(&scroller);
@@ -118,14 +172,14 @@ impl HistoryUi {
 
         let side_button = gtk::ToggleButton::builder()
             .icon_name(history_icon())
-            .tooltip_text("Historial (Ctrl+H)")
+            .tooltip_text("Biblioteca (Ctrl+H)")
             .css_classes(["flat", "brujula-newfolder"])
             .build();
         let popover = gtk::Popover::new();
         popover.add_css_class("brujula-history-pop");
         let top_button = gtk::MenuButton::builder()
             .icon_name(history_icon())
-            .tooltip_text("Historial (Ctrl+H)")
+            .tooltip_text("Biblioteca (Ctrl+H)")
             .css_classes(["flat", "brujula-newfolder"])
             .popover(&popover)
             .visible(false)
@@ -140,7 +194,9 @@ impl HistoryUi {
             search,
             empty,
             back,
-            urls: RefCell::new(Vec::new()),
+            targets: RefCell::new(Vec::new()),
+            section: Cell::new(Section::History),
+            choosers,
         }
     }
 
@@ -184,16 +240,38 @@ impl Browser {
                 b.refill_history();
             }
         });
+        for (section, button) in &self.hist.choosers {
+            let this = Rc::downgrade(self);
+            let section = *section;
+            button.connect_toggled(move |button| {
+                if !button.is_active() {
+                    return;
+                }
+                if let Some(b) = this.upgrade() {
+                    b.hist.section.set(section);
+                    b.hist.search.set_visible(section == Section::History);
+                    b.refill_history();
+                }
+            });
+        }
         let this = Rc::downgrade(self);
         self.hist.list.connect_row_activated(move |_, row| {
             let Some(b) = this.upgrade() else { return };
-            let url = usize::try_from(row.index())
+            let target = usize::try_from(row.index())
                 .ok()
-                .and_then(|i| b.hist.urls.borrow().get(i).cloned().flatten());
-            if let Some(url) = url {
-                b.hist.side_button.set_active(false);
-                b.hist.popover.popdown();
-                b.open_tab(&url, None, true);
+                .and_then(|i| b.hist.targets.borrow().get(i).cloned().flatten());
+            let Some(target) = target else { return };
+            b.hist.side_button.set_active(false);
+            b.hist.popover.popdown();
+            match target {
+                Target::Page(url) => {
+                    b.open_tab(&url, None, true);
+                }
+                Target::Archived(url) => b.change_archive("open", &url),
+                Target::File(path) => {
+                    let uri = gio::File::for_path(&path).uri();
+                    let _ = gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE);
+                }
             }
         });
         self.place_history(self.horizontal());
@@ -241,6 +319,75 @@ impl Browser {
         while let Some(row) = ui.list.first_child() {
             ui.list.remove(&row);
         }
+        match ui.section.get() {
+            Section::History => self.fill_pages(),
+            Section::Downloads => self.fill_files(
+                glib::user_special_dir(glib::UserDirectory::Downloads)
+                    .unwrap_or_else(glib::home_dir),
+                brujula_core::library::is_download,
+                "No hay descargas en la carpeta Descargas.",
+                false,
+            ),
+            Section::Captures => self.fill_files(
+                glib::user_special_dir(glib::UserDirectory::Pictures)
+                    .unwrap_or_else(glib::home_dir),
+                brujula_core::library::is_capture,
+                "Aún no has capturado ninguna página (Ctrl+Mayús+S).",
+                true,
+            ),
+            Section::Archive => self.fill_archive(),
+        }
+    }
+
+    /// The downloads and the screenshots: the newest files of their folder.
+    fn fill_files(
+        &self,
+        dir: std::path::PathBuf,
+        keep: fn(&str) -> bool,
+        none: &str,
+        thumbnails: bool,
+    ) {
+        let ui = &self.hist;
+        let files = brujula_core::library::recent_files(&dir, keep, SHOWN_FILES);
+        let mut targets = Vec::with_capacity(files.len());
+        for f in &files {
+            ui.list.append(&file_row(
+                &f.name,
+                &day_label(f.modified),
+                &f.path,
+                thumbnails,
+            ));
+            targets.push(Some(Target::File(f.path.clone())));
+        }
+        ui.empty.set_visible(files.is_empty());
+        ui.empty.set_label(none);
+        *ui.targets.borrow_mut() = targets;
+    }
+
+    /// The tabs the archive keeps, newest first.
+    fn fill_archive(&self) {
+        let ui = &self.hist;
+        let entries: Vec<_> = self.archive.borrow().items().to_vec();
+        let mut targets = Vec::with_capacity(entries.len());
+        for e in &entries {
+            let visit = brujula_core::history::Visit {
+                url: e.url.clone(),
+                title: e.title.clone(),
+                last: e.at,
+                visits: 1,
+            };
+            ui.list.append(&history_row(&visit));
+            targets.push(Some(Target::Archived(e.url.clone())));
+        }
+        ui.empty.set_visible(entries.is_empty());
+        ui.empty.set_label("No hay pestañas archivadas.");
+        *ui.targets.borrow_mut() = targets;
+    }
+
+    /// The pages of the history that match what is typed in the search, newest first, under a
+    /// heading for each day.
+    fn fill_pages(&self) {
+        let ui = &self.hist;
         let query = ui.search.text().to_string();
         let visits: Vec<_> = {
             let h = self.history.borrow();
@@ -250,7 +397,7 @@ impl Browser {
                 h.search(&query, SHOWN).into_iter().cloned().collect()
             }
         };
-        let mut urls = Vec::with_capacity(visits.len());
+        let mut targets = Vec::with_capacity(visits.len());
         let mut day = String::new();
         for visit in &visits {
             let label = day_label(visit.last);
@@ -269,10 +416,10 @@ impl Browser {
                 row.set_selectable(false);
                 row.set_child(Some(&heading));
                 ui.list.append(&row);
-                urls.push(None);
+                targets.push(None);
             }
             ui.list.append(&history_row(visit));
-            urls.push(Some(visit.url.clone()));
+            targets.push(Some(Target::Page(visit.url.clone())));
         }
         ui.empty.set_visible(visits.is_empty());
         ui.empty.set_label(if query.trim().is_empty() {
@@ -280,7 +427,7 @@ impl Browser {
         } else {
             "No hay nada que coincida."
         });
-        *ui.urls.borrow_mut() = urls;
+        *ui.targets.borrow_mut() = targets;
     }
 
     /// The history changed (a page was visited, cleaned): redraws the list if it is showing.
@@ -320,5 +467,49 @@ fn history_row(visit: &brujula_core::history::Visit) -> gtk::ListBoxRow {
     row.add_css_class("brujula-row");
     row.set_tooltip_text(Some(&visit.url));
     row.set_child(Some(&col));
+    row
+}
+
+/// A file of the downloads or the screenshots: its name, when it was made, and, for a screenshot,
+/// a small preview.
+fn file_row(name: &str, when: &str, path: &std::path::Path, thumbnail: bool) -> gtk::ListBoxRow {
+    let title = gtk::Label::builder()
+        .label(name)
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .css_classes(["brujula-tab-title"])
+        .build();
+    let detail = gtk::Label::builder()
+        .label(when)
+        .xalign(0.0)
+        .css_classes(["dim-label", "caption"])
+        .build();
+    let col = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    col.set_hexpand(true);
+    col.append(&title);
+    col.append(&detail);
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    line.set_margin_start(8);
+    line.set_margin_end(8);
+    line.set_margin_top(5);
+    line.set_margin_bottom(5);
+    if thumbnail {
+        let pic = gtk::Picture::for_filename(path);
+        pic.set_content_fit(gtk::ContentFit::Cover);
+        pic.set_can_shrink(true);
+        pic.set_size_request(56, 36);
+        pic.set_overflow(gtk::Overflow::Hidden);
+        pic.add_css_class("brujula-library-thumb");
+        line.append(&pic);
+    } else {
+        let icon = gtk::Image::from_icon_name("ndl-file-symbolic");
+        icon.set_pixel_size(16);
+        line.append(&icon);
+    }
+    line.append(&col);
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("brujula-row");
+    row.set_tooltip_text(Some(&path.to_string_lossy()));
+    row.set_child(Some(&line));
     row
 }
