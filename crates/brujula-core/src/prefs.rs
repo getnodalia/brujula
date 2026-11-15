@@ -543,8 +543,8 @@ pub struct Extras {
     pub status: String,
     /// Archived tabs: address and title.
     pub archived: Vec<(String, String)>,
-    /// Boosts: site, dark mode, CSS.
-    pub boosts: Vec<(String, bool, String)>,
+    /// Boosts, one card each.
+    pub boosts: Vec<BoostView>,
     /// The Chromium extensions that are installed.
     pub extensions: Vec<ExtItem>,
     /// The pages visited last: address and title, newest first.
@@ -696,6 +696,20 @@ fn icon_grid(space_id: u32, current: &str) -> String {
     format!(r#"<div class="iconsgrid">{buttons}</div>"#)
 }
 
+/// What the Boosts section shows of one site's boost.
+#[derive(Debug, Clone, Default)]
+pub struct BoostView {
+    pub host: String,
+    pub dark: bool,
+    pub css: String,
+    /// The id of the font (`boosts::FONTS`) or empty.
+    pub font: String,
+    pub bg: String,
+    pub fg: String,
+    /// The selectors hidden with Zap.
+    pub hidden: Vec<String>,
+}
+
 /// The boosts: a form to add a site, and one card for each.
 fn boosts_section(view: &Extras) -> String {
     let add = stacked(
@@ -706,13 +720,50 @@ fn boosts_section(view: &Extras) -> String {
     let cards: String = view
         .boosts
         .iter()
-        .map(|(host, dark, css)| {
+        .map(|b| {
+            let host = &b.host;
             let h = escape(host);
+            let fonts: String = std::iter::once(("", "La del sitio"))
+                .chain(crate::boosts::FONTS.iter().map(|f| (f.0, f.1)))
+                .map(|(id, name)| {
+                    format!(
+                        r#"<option value="{id}"{sel}>{name}</option>"#,
+                        sel = if b.font == id { " selected" } else { "" },
+                    )
+                })
+                .collect();
+            let colour = |which: &str, value: &str, fallback: &str, label: &str| {
+                format!(
+                    r##"<input type="color" data-k="boost.{which}.{h}" value="{v}" aria-label="{label} de {h}">"##,
+                    v = if crate::boosts::valid_color(value) { value } else { fallback },
+                )
+            };
+            let zapped: String = b
+                .hidden
+                .iter()
+                .enumerate()
+                .map(|(i, sel)| {
+                    format!(
+                        r#"<div class="zap"><code>{sel}</code><button type="button" class="seg plain" data-k="boost.unhide.{h}" data-v="{i}" data-redraw="1">Mostrar</button></div>"#,
+                        sel = escape(sel),
+                    )
+                })
+                .collect();
+            let hidden = if b.hidden.is_empty() {
+                r#"<p>Ninguno. Con «Ocultar un elemento» (Ctrl+Alt+Z) eliges en la página lo que sobra.</p>"#.to_owned()
+            } else {
+                format!(
+                    r#"{zapped}<button type="button" class="seg plain" data-k="boost.unhide_all.{h}" data-v="1" data-redraw="1">Mostrar todos</button>"#
+                )
+            };
             format!(
-                r#"<div class="boost"><div class="row"><div class="what"><b>{h}</b></div><div class="ctl"><span class="status">Modo oscuro</span>{dark}<button type="button" class="seg plain danger" data-k="boost.remove" data-v="{h}" data-removeall="1">Quitar</button></div></div><div class="row stack"><textarea class="css" data-k="boost.css.{h}" rows="6" maxlength="{max}" spellcheck="false" placeholder="CSS de este sitio, por ejemplo: body {{ font-size: 18px !important; }}" aria-label="CSS de {h}">{css}</textarea></div></div>"#,
-                dark = switch(&format!("boost.dark.{host}"), *dark),
+                r#"<div class="boost"><div class="row"><div class="what"><b>{h}</b></div><div class="ctl"><span class="status">Modo oscuro</span>{dark}<button type="button" class="seg plain danger" data-k="boost.remove" data-v="{h}" data-removeall="1">Quitar</button></div></div><div class="row"><div class="what"><b>Fuente</b></div><div class="ctl"><select class="field" data-k="boost.font.{h}" aria-label="Fuente de {h}">{fonts}</select></div></div><div class="row"><div class="what"><b>Colores</b><p>Fondo y texto de todo el sitio.</p></div><div class="ctl">{bg}{fg}<button type="button" class="seg plain" data-k="boost.colors.{h}" data-v="clear" data-redraw="1">Quitar</button></div></div><div class="row stack"><div class="what"><b>Elementos ocultos ({n})</b>{hidden}</div></div><div class="row stack"><textarea class="css" data-k="boost.css.{h}" rows="6" maxlength="{max}" spellcheck="false" placeholder="CSS de este sitio, por ejemplo: body {{ font-size: 18px !important; }}" aria-label="CSS de {h}">{css}</textarea></div></div>"#,
+                dark = switch(&format!("boost.dark.{host}"), b.dark),
+                bg = colour("bg", &b.bg, "#ffffff", "Fondo"),
+                fg = colour("fg", &b.fg, "#000000", "Texto"),
+                n = b.hidden.len(),
                 max = crate::boosts::MAX_CSS,
-                css = escape(css),
+                css = escape(&b.css),
             )
         })
         .collect();
@@ -1980,6 +2031,7 @@ output{min-width:3.6rem;text-align:right;color:var(--muted);font-variant-numeric
 .engine b{font-weight:560;font-size:.92rem}
 .css{width:100%;font:12.5px ui-monospace,monospace;background:var(--chip);color:var(--fg);border:1px solid var(--line);border-radius:.7rem;padding:.7rem;resize:vertical}
 .boost .row.stack{padding-top:0;border-top:0}
+.boost select.field{width:auto;max-width:14rem}.boost input[type=color]{width:2.2rem;height:2rem;border:0;background:none;padding:0}.zap{display:flex;align-items:center;gap:.6rem;margin:.3rem 0}.zap code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px ui-monospace,monospace}
 .pface{display:grid;place-items:center;flex:none;margin-right:.9rem}.pface+.what{flex:1}.pface svg{width:2.5rem;height:2.5rem;border-radius:50%}
 .pavs{display:flex;flex-wrap:wrap;gap:.4rem;width:100%}
 .pav{position:relative;display:block;border-radius:50%;cursor:pointer}.pav input{position:absolute;opacity:0;inset:0}
@@ -2051,7 +2103,7 @@ document.addEventListener('click',e=>{
   if(k==='reset_appearance'){setTimeout(()=>send('redraw','1'),150)}
 });
 document.addEventListener('change',e=>{
-  const i=e.target;if((i.type==='text'||i.tagName==='TEXTAREA')&&i.dataset.k)send(i.dataset.k,i.value)
+  const i=e.target;if((i.type==='text'||i.tagName==='TEXTAREA'||i.tagName==='SELECT')&&i.dataset.k)send(i.dataset.k,i.value)
 });
 document.addEventListener('input',e=>{
   const i=e.target;if(!i.dataset||!i.dataset.k)return;
@@ -2354,11 +2406,18 @@ mod tests {
     #[test]
     fn boosts_are_listed_with_their_css_escaped() {
         let view = Extras {
-            boosts: vec![(
-                "wiki.org".into(),
-                true,
-                "</textarea><script>x()</script>body{}".into(),
-            )],
+            boosts: vec![BoostView {
+                host: "wiki.org".into(),
+                dark: true,
+                css: "</textarea><script>x()</script>body{}".into(),
+                font: "serif".into(),
+                bg: "#101010".into(),
+                fg: "#eeeeee".into(),
+                hidden: vec![
+                    "div.banner > a".into(),
+                    "</code><script>y()</script>".into(),
+                ],
+            }],
             ..Extras::default()
         };
         let html = render(
@@ -2372,6 +2431,15 @@ mod tests {
         assert!(html.contains("&lt;/textarea&gt;&lt;script&gt;x()"));
         assert!(!html.contains("<script>x()"));
         assert!(html.contains(r#"id="boost-host""#));
+        // Font, colours and the elements hidden with Zap.
+        assert!(html.contains(r#"data-k="boost.font.wiki.org""#));
+        assert!(html.contains(r#"<option value="serif" selected>"#));
+        assert!(html.contains(r##"data-k="boost.bg.wiki.org" value="#101010""##));
+        assert!(html.contains(r#"data-k="boost.unhide.wiki.org" data-v="0""#));
+        assert!(html.contains(r#"data-k="boost.unhide.wiki.org" data-v="1""#));
+        assert!(html.contains("Elementos ocultos (2)"));
+        assert!(html.contains("&lt;/code&gt;&lt;script&gt;y()"));
+        assert!(!html.contains("<script>y()"));
     }
 
     #[test]

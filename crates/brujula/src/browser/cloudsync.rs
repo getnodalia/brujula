@@ -150,7 +150,15 @@ impl Browser {
                 .borrow()
                 .items()
                 .iter()
-                .map(|b| (b.host.clone(), b.dark, b.css.clone()))
+                .map(|b| prefs::BoostView {
+                    host: b.host.clone(),
+                    dark: b.dark,
+                    css: b.css.clone(),
+                    font: b.font.clone(),
+                    bg: b.bg.clone(),
+                    fg: b.fg.clone(),
+                    hidden: b.hidden.clone(),
+                })
                 .collect(),
             archived: self
                 .archive
