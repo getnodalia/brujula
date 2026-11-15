@@ -197,8 +197,13 @@ impl Browser {
             .map(|u| u.to_string());
         self.close_peek();
         if let Some(uri) = uri {
-            let after = self.model.borrow().selected();
-            self.open_tab(&uri, after, true);
+            // A rule for the site wins; otherwise the tab goes next to the one in front.
+            if self.routed_space(&uri).is_some() {
+                self.open_external(&uri);
+            } else {
+                let after = self.model.borrow().selected();
+                self.open_tab(&uri, after, true);
+            }
         }
     }
 }

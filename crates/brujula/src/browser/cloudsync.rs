@@ -145,6 +145,7 @@ impl Browser {
                 .collect(),
             status: self.sync_status.borrow().clone(),
             extensions: self.ext_view_list(),
+            routes: self.route_rules(),
             boosts: self
                 .boosts
                 .borrow()

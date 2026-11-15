@@ -32,6 +32,7 @@ pub mod omnibox;
 pub mod prefs;
 pub mod profiles;
 pub mod quick;
+pub mod routes;
 pub mod scan;
 pub mod scriptlets;
 pub mod search;

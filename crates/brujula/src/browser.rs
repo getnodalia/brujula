@@ -72,6 +72,7 @@ mod passwords;
 mod peek;
 mod pinned;
 mod profiles_ui;
+mod routes;
 mod sleep;
 mod split;
 mod system_theme;
@@ -195,10 +196,11 @@ pub fn present(app: &gtk::Application, urls: &[String]) {
                 && i == 0
                 && urls.len() == 1
                 && (u.starts_with("http://") || u.starts_with("https://"))
+                && b.routed_space(u).is_none()
             {
                 b.peek(u);
             } else {
-                b.open_tab(u, None, true);
+                b.open_external(u);
             }
         }
         return;
@@ -369,6 +371,8 @@ pub struct Browser {
     floats: RefCell<HashMap<TabId, float::Floating>>,
     /// The sites the user restyled, and the style sheets that carry it to the pages.
     boosts: RefCell<brujula_core::boosts::Boosts>,
+    /// Which space the links to each site open in.
+    routes: RefCell<brujula_core::routes::Routes>,
     boost_sheets: RefCell<Vec<webkit6::UserStyleSheet>>,
     /// The site whose page Zap is picking an element of.
     zap_host: RefCell<Option<String>>,
@@ -843,6 +847,7 @@ impl Browser {
             save_queued: Cell::new(false),
             floats: RefCell::new(HashMap::new()),
             boosts: RefCell::new(boosts::load()),
+            routes: RefCell::new(routes::load()),
             boost_sheets: RefCell::new(Vec::new()),
             zap_host: RefCell::new(None),
             space_tint: gtk::CssProvider::new(),
@@ -1569,7 +1574,7 @@ impl Browser {
         self.rebuild_spaces();
         self.load_if_lazy();
         for u in urls {
-            self.open_tab(u, None, true);
+            self.open_external(u);
         }
         if self.needs_welcome() {
             // The first thing a person sees; the new-tab page waits behind it.
@@ -2598,6 +2603,10 @@ impl Browser {
         // Bookmarks and spaces are not settings: they have their own stores.
         if let Some(rest) = key.strip_prefix("space.") {
             self.change_space(rest, value);
+            return;
+        }
+        if let Some(what) = key.strip_prefix("route.") {
+            self.change_route(what, value);
             return;
         }
         if let Some(what) = key.strip_prefix("boost.") {
