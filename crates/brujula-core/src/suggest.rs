@@ -224,6 +224,7 @@ mod tests {
             folder: None,
             active: 0,
             essential: None,
+            home: None,
         }
     }
 

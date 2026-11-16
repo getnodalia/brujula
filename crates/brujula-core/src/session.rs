@@ -24,6 +24,9 @@ pub struct SavedTab {
     /// When it was last in front (see `Tab::active`).
     #[serde(default)]
     pub active: u64,
+    /// The page a pinned tab comes back to (see `Tab::home`).
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +50,10 @@ fn restorable(url: &str) -> bool {
         || url.starts_with("http://")
 }
 
+fn restorable_web(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
 impl Session {
     pub fn capture(model: &TabModel, spaces: &Spaces, folders: &Folders) -> Self {
         // The pages of the essentials are not kept: the icon opens them again.
@@ -68,6 +75,7 @@ impl Session {
                 space: t.space,
                 folder: t.folder,
                 active: t.active,
+                home: t.home.clone(),
             })
             .collect();
         Self {
@@ -92,6 +100,10 @@ impl Session {
         s.folders = std::mem::take(&mut s.folders).sanitized(&s.spaces);
         let home = s.spaces.all()[0].id;
         for t in &mut s.tabs {
+            // Only a pinned tab has a page to come back to, and only a website.
+            if !t.pinned || !t.home.as_deref().is_some_and(restorable_web) {
+                t.home = None;
+            }
             if !s.spaces.contains(t.space) {
                 t.space = home;
             }
@@ -188,6 +200,26 @@ mod tests {
         assert_eq!(old.tabs[0].space, FIRST_SPACE);
         let stray = Session::from_json(r#"{"tabs":[{"url":"https://ok.com","space":42}]}"#);
         assert_eq!(stray.tabs[0].space, FIRST_SPACE);
+    }
+
+    #[test]
+    fn the_page_a_pinned_tab_comes_back_to_survives_a_restart() {
+        let mut m = TabModel::new();
+        let (a, _) = m.open("https://a.com", None, false);
+        m.set_pinned(a, true);
+        m.update(a, |t| t.url = "https://a.com/lejos".into());
+        let s = Session::from_json(
+            &Session::capture(&m, &Spaces::default(), &Folders::default()).to_json(),
+        );
+        assert_eq!(s.tabs[0].url, "https://a.com/lejos");
+        assert_eq!(s.tabs[0].home.as_deref(), Some("https://a.com"));
+        // A file cannot give a tab a home that is not a website, or one to an unpinned tab.
+        let bad = Session::from_json(
+            r#"{"tabs":[{"url":"https://a.com","pinned":true,"home":"javascript:1"},
+                        {"url":"https://b.com","home":"https://b.com"}]}"#,
+        );
+        assert_eq!(bad.tabs[0].home, None);
+        assert_eq!(bad.tabs[1].home, None);
     }
 
     #[test]
