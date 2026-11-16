@@ -24,6 +24,7 @@ pub mod fonts;
 pub mod history;
 pub mod https;
 pub mod icons;
+pub mod library;
 pub mod news;
 pub mod newtab;
 pub mod notes;

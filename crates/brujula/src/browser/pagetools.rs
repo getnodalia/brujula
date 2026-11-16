@@ -35,6 +35,7 @@ impl Browser {
         action("zoom-reset", Box::new(|b| b.zoom_to(zoom::DEFAULT)));
         action("clear-tabs", Box::new(|b| b.clear_tabs()));
         action("zap", Box::new(|b| b.start_zapping()));
+        action("return-home", Box::new(|b| b.return_current_to_pinned()));
         action("copy-link", Box::new(|b| b.copy_link()));
         action("screenshot", Box::new(|b| b.capture_page()));
         action("print", Box::new(|b| b.print_page()));

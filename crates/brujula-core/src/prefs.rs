@@ -1413,7 +1413,7 @@ fn archive_section(s: &Settings, view: &Extras) -> String {
         &[
             row(
                 "Enlaces de otras aplicaciones",
-                "Un enlace que abres desde otra aplicación mientras Brújula está abierta se ve primero en una tarjeta sobre la página (como Peek), con un botón para dejarlo en una pestaña.",
+                "Un enlace que abres desde otra aplicación se ve primero sin cargar todo el navegador: en una ventana pequeña con solo la página si Brújula está cerrado (como Little Arc), o en una tarjeta sobre la página (como Peek) si ya está abierto. Un botón lo deja en una pestaña.",
                 &switch("quick_links", s.quick_links),
             ),
             row(

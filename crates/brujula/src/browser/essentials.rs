@@ -547,6 +547,13 @@ impl Browser {
                 }
             }),
         );
+        let page = self.model.borrow().essential_tab(id);
+        if let Some(tab) = page.filter(|t| self.can_return_home(*t)) {
+            entry(
+                "Volver al inicio del sitio",
+                Box::new(move |b| b.return_to_pinned(tab)),
+            );
+        }
         if self.model.borrow().essential_tab(id).is_some() {
             entry(
                 "Cerrar la página",
