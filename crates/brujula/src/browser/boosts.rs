@@ -86,6 +86,30 @@ impl Browser {
             self.boosts.borrow_mut().set_dark(&h, on).then_some(h)
         } else if let Some(h) = site("css.") {
             self.boosts.borrow_mut().set_css(&h, value).then_some(h)
+        } else if let Some(h) = site("font.") {
+            self.boosts.borrow_mut().set_font(&h, value).then_some(h)
+        } else if let Some(h) = site("bg.") {
+            self.boosts
+                .borrow_mut()
+                .set_color(&h, "bg", value)
+                .then_some(h)
+        } else if let Some(h) = site("fg.") {
+            self.boosts
+                .borrow_mut()
+                .set_color(&h, "fg", value)
+                .then_some(h)
+        } else if let Some(h) = site("colors.") {
+            let mut boosts = self.boosts.borrow_mut();
+            let a = boosts.set_color(&h, "bg", "");
+            let b = boosts.set_color(&h, "fg", "");
+            (a || b).then_some(h)
+        } else if let Some(h) = site("unhide_all.") {
+            self.boosts.borrow_mut().unhide_all(&h).then_some(h)
+        } else if let Some(h) = site("unhide.") {
+            let index = value.parse().ok();
+            index
+                .is_some_and(|i| self.boosts.borrow_mut().unhide(&h, i))
+                .then_some(h)
         } else {
             return;
         };
@@ -146,5 +170,95 @@ impl Browser {
         self.save_boosts();
         self.open_settings(Some("boosts"));
         self.redraw_settings();
+    }
+}
+
+const ZAP_JS: &str = include_str!("zap.js");
+const ZAP_HANDLER: &str = "brujulaZap";
+const ZAP_WORLD: &str = "brujula-zap";
+
+impl Browser {
+    /// Registers what Zap's page script talks to. The script runs in a world of its own that the
+    /// page cannot reach.
+    pub(super) fn start_zap(self: &Rc<Self>) {
+        if self.private {
+            return;
+        }
+        self.ucm
+            .register_script_message_handler(ZAP_HANDLER, Some(ZAP_WORLD));
+        let this = Rc::downgrade(self);
+        self.ucm
+            .connect_script_message_received(Some(ZAP_HANDLER), move |_, value| {
+                if let Some(b) = this.upgrade() {
+                    b.zapped(&value.to_str());
+                }
+            });
+    }
+
+    /// «Ocultar un elemento de la página»: the page in front lets the user click what to hide.
+    pub(super) fn start_zapping(self: &Rc<Self>) {
+        let Some(view) = self.current_view() else {
+            return;
+        };
+        let host = view
+            .uri()
+            .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+            .and_then(|u| adblock::normalize_host(&u));
+        let Some(host) = host.filter(|_| !self.private) else {
+            self.toast.flash(
+                "ndl-close-symbolic",
+                "Solo se pueden ocultar elementos de páginas web, y no en una ventana privada",
+            );
+            return;
+        };
+        *self.zap_host.borrow_mut() = Some(host);
+        // The script lives in its own world, which the page cannot reach.
+        view.evaluate_javascript(
+            ZAP_JS,
+            Some(ZAP_WORLD),
+            None,
+            gio::Cancellable::NONE,
+            |_| {},
+        );
+    }
+
+    /// The page says which element the user picked: it goes into the boost of the site that was
+    /// in front when Zap started.
+    fn zapped(self: &Rc<Self>, selector: &str) {
+        let Some(host) = self.zap_host.borrow_mut().take() else {
+            return;
+        };
+        if !self.boosts.borrow_mut().hide(&host, selector) {
+            self.toast
+                .flash("ndl-close-symbolic", "No se pudo ocultar ese elemento");
+            return;
+        }
+        self.save_boosts();
+        self.apply_boosts();
+        let this = Rc::downgrade(self);
+        let selector = selector.trim().to_owned();
+        self.toast.show(
+            None,
+            "ndl-check-symbolic",
+            &format!("Elemento oculto en {host}"),
+            vec![(
+                "Deshacer".to_owned(),
+                true,
+                Box::new(move || {
+                    let Some(b) = this.upgrade() else { return };
+                    let index = b
+                        .boosts
+                        .borrow()
+                        .get(&host)
+                        .and_then(|boost| boost.hidden.iter().position(|h| *h == selector));
+                    if let Some(i) = index {
+                        b.boosts.borrow_mut().unhide(&host, i);
+                        b.save_boosts();
+                        b.apply_boosts();
+                        b.reload_site(&host);
+                    }
+                }),
+            )],
+        );
     }
 }

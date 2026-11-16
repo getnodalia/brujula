@@ -142,6 +142,7 @@ pub fn install_app_actions(app: &gtk::Application) {
     app.set_accels_for_action("win.toggle-site-adblock", &["<Ctrl><Shift>b"]);
     app.set_accels_for_action("win.find", &["<Ctrl>f"]);
     app.set_accels_for_action("win.clear-tabs", &["<Ctrl><Shift>k"]);
+    app.set_accels_for_action("win.zap", &["<Ctrl><Alt>z"]);
     app.set_accels_for_action("win.return-home", &["<Alt>Home"]);
     app.set_accels_for_action("win.copy-link", &["<Ctrl><Shift>c"]);
     app.set_accels_for_action("win.screenshot", &["<Ctrl><Shift>s"]);
@@ -369,6 +370,8 @@ pub struct Browser {
     /// The sites the user restyled, and the style sheets that carry it to the pages.
     boosts: RefCell<brujula_core::boosts::Boosts>,
     boost_sheets: RefCell<Vec<webkit6::UserStyleSheet>>,
+    /// The site whose page Zap is picking an element of.
+    zap_host: RefCell<Option<String>>,
     /// The colour of the space in front, as a rule for the sidebar.
     space_tint: gtk::CssProvider,
     /// The notice over the foot of the page.
@@ -841,6 +844,7 @@ impl Browser {
             floats: RefCell::new(HashMap::new()),
             boosts: RefCell::new(boosts::load()),
             boost_sheets: RefCell::new(Vec::new()),
+            zap_host: RefCell::new(None),
             space_tint: gtk::CssProvider::new(),
             toast,
             find,
@@ -1490,6 +1494,7 @@ impl Browser {
                 this.start_extensions();
                 this.start_passwords();
                 this.start_passkeys();
+                this.start_zap();
             }
             this.restore(&urls);
             if let Some(uri) = mini {
@@ -3295,6 +3300,7 @@ fn main_menu() -> gio::Menu {
     page.append(Some("Buscar en la página"), Some("win.find"));
     page.append(Some("Copiar el enlace"), Some("win.copy-link"));
     page.append(Some("Capturar la página"), Some("win.screenshot"));
+    page.append(Some("Ocultar un elemento de la página"), Some("win.zap"));
     page.append(Some("Silenciar o dar sonido"), Some("win.toggle-mute"));
     page.append(Some("Imprimir…"), Some("win.print"));
     page.append(Some("Acercar"), Some("win.zoom-in"));
