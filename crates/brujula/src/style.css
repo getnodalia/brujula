@@ -39,6 +39,8 @@
 .brujula-splitview > separator { min-width: 2px; background: rgba(127, 127, 127, 0.3); }
 .brujula-peek { background: rgba(0, 0, 0, 0.4); }
 .brujula-peek-card { background: var(--ndl-color-surface-panel); border-radius: 16px; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35); }
+.brujula-library-tab { font-size: var(--ndl-font-size-small); padding: 2px 6px; }
+.brujula-library-thumb { border-radius: 6px; }
 .brujula-peek-header { padding: 6px 8px 6px 16px; }
 .brujula-newtab { min-height: 36px; margin: 0 var(--ndl-space-xs); }
 
