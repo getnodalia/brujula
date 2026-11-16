@@ -25,7 +25,7 @@ jobs:
           fi
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15'
       - name: Parse changed Python, JSON, TOML and shell sources
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
