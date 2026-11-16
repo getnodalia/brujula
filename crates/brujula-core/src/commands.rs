@@ -33,6 +33,7 @@ win.clear-tabs|Limpiar pestañas sin anclar|archivar cerrar todas ordenar clear|
 app.new-private-window|Nueva ventana privada|incognito navegacion|Ctrl+Mayús+N|ndl-eye-off-symbolic\n\
 win.toggle-sidebar|Mostrar u ocultar la barra lateral|pestañas anclar|Ctrl+B|ndl-sidebar-symbolic\n\
 win.toggle-history|Biblioteca|historial descargas capturas archivo visitadas paginas|Ctrl+H|ndl-history-symbolic\n\
+win.return-home|Volver a la página anclada|esencial fijada inicio home casa|Alt+Inicio|ndl-home-symbolic\n\
 win.add-essential|Añadir a esenciales|fijar favoritos||ndl-pin-symbolic\n\
 win.open-drm|Abrir con soporte de DRM (Netflix…)|widevine netflix disney spotify video protegido||ndl-shield-check-symbolic";
 

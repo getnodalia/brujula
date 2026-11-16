@@ -63,12 +63,14 @@ mod folders;
 mod history;
 mod history_panel;
 mod import;
+mod mini;
 mod notes;
 mod page_action;
 mod pagetools;
 mod passkeys;
 mod passwords;
 mod peek;
+mod pinned;
 mod profiles_ui;
 mod sleep;
 mod split;
@@ -140,6 +142,7 @@ pub fn install_app_actions(app: &gtk::Application) {
     app.set_accels_for_action("win.toggle-site-adblock", &["<Ctrl><Shift>b"]);
     app.set_accels_for_action("win.find", &["<Ctrl>f"]);
     app.set_accels_for_action("win.clear-tabs", &["<Ctrl><Shift>k"]);
+    app.set_accels_for_action("win.return-home", &["<Alt>Home"]);
     app.set_accels_for_action("win.copy-link", &["<Ctrl><Shift>c"]);
     app.set_accels_for_action("win.screenshot", &["<Ctrl><Shift>s"]);
     app.set_accels_for_action("win.toggle-mute", &["<Ctrl>m"]);
@@ -178,6 +181,11 @@ pub fn present_private(app: &gtk::Application, urls: &[String]) {
 pub fn present(app: &gtk::Application, urls: &[String]) {
     let existing = BROWSER.with(|b| b.borrow().clone());
     if let Some(b) = existing {
+        // Only the small window is open: the next link goes there too.
+        if b.wants_mini(urls) {
+            b.open_mini(&urls[0]);
+            return;
+        }
         b.window.present();
         // A link from another application: a card over the page first, like Arc's Little Arc.
         let quick = b.settings.borrow().quick_links;
@@ -196,6 +204,12 @@ pub fn present(app: &gtk::Application, urls: &[String]) {
     }
     let browser = Browser::new(app, false);
     BROWSER.with(|b| *b.borrow_mut() = Some(browser.clone()));
+    // Brújula was opened by a link from another application: a small window with just the page
+    // (Little Arc), and the full window only if it is asked for.
+    if browser.wants_mini(urls) {
+        browser.start_with(&[], Some(urls[0].clone()));
+        return;
+    }
     browser.start(urls);
     browser.window.present();
 }
@@ -219,6 +233,8 @@ struct Row {
     close: gtk::Button,
     audio: gtk::Image,
     pin: gtk::Image,
+    /// Takes a pinned tab that has wandered off back to its page.
+    home: gtk::Button,
     spinner: gtk::Spinner,
 }
 
@@ -366,6 +382,8 @@ pub struct Browser {
     /// The card that shows a link in a preview, and the page in it.
     peek: peek::PeekCard,
     peek_view: RefCell<Option<WebView>>,
+    /// The small window of a link that opened Brújula (Little Arc), and its page.
+    mini: RefCell<Option<mini::MiniWindow>>,
     /// The two tabs shown side by side, and the `Paned` that holds their pages.
     paired: RefCell<Option<(TabId, TabId)>>,
     split_paned: gtk::Paned,
@@ -834,6 +852,7 @@ impl Browser {
             drm_told: RefCell::new(std::collections::HashSet::new()),
             peek,
             peek_view: RefCell::new(None),
+            mini: RefCell::new(None),
             paired: RefCell::new(None),
             split_paned,
             archive: RefCell::new(
@@ -1453,6 +1472,11 @@ impl Browser {
     }
 
     fn start(self: &Rc<Self>, urls: &[String]) {
+        self.start_with(urls, None);
+    }
+
+    /// Like `start`; with `mini`, the page is shown in the small window once the blocker is in.
+    fn start_with(self: &Rc<Self>, urls: &[String], mini: Option<String>) {
         let this = self.clone();
         let urls = urls.to_vec();
         glib::spawn_future_local(async move {
@@ -1468,6 +1492,9 @@ impl Browser {
                 this.start_passkeys();
             }
             this.restore(&urls);
+            if let Some(uri) = mini {
+                this.open_mini(&uri);
+            }
             if !this.private {
                 this.start_sync();
                 this.start_archiving();
@@ -1500,6 +1527,8 @@ impl Browser {
             let (id, ch) = self.model.borrow_mut().open(&t.url, None, false);
             if t.pinned {
                 self.model.borrow_mut().set_pinned(id, true);
+                // The page it was pinned on, not the one it had wandered to.
+                self.model.borrow_mut().restore_home(id, t.home.as_deref());
             }
             self.model.borrow_mut().set_folder(id, t.folder);
             self.model
@@ -2149,6 +2178,7 @@ impl Browser {
         let pin = gtk::Image::from_icon_name("ndl-pin-symbolic");
         pin.set_pixel_size(14);
         pin.set_visible(false);
+        let home = self.make_home_button(id);
         let close = gtk::Button::builder()
             .icon_name("ndl-close-symbolic")
             .css_classes(["flat", "circular", "brujula-tab-close"])
@@ -2163,6 +2193,7 @@ impl Browser {
         content.append(&title);
         content.append(&audio);
         content.append(&pin);
+        content.append(&home);
         content.append(&close);
         let row = gtk::ListBoxRow::new();
         row.add_css_class("brujula-row");
@@ -2211,6 +2242,7 @@ impl Browser {
                 close,
                 audio,
                 pin,
+                home,
                 spinner,
             },
         );
@@ -2356,6 +2388,7 @@ impl Browser {
         }));
         r.close.set_visible(!tab.pinned);
         r.pin.set_visible(tab.pinned);
+        r.home.set_visible(self.can_return_home(id));
         if let Some(v) = self.views.borrow().get(&id) {
             match v.favicon() {
                 Some(tex) => {
@@ -3021,6 +3054,16 @@ impl Browser {
                 b.apply(c);
             }),
         );
+        if pinned && self.can_return_home(id) {
+            add(
+                "Volver a la página anclada",
+                Box::new(move |b| b.return_to_pinned(id)),
+            );
+            add(
+                "Usar esta página como la anclada",
+                Box::new(move |b| b.set_pinned_page_here(id)),
+            );
+        }
         // Folders: move the tab into one, out of it, or into a new one.
         if !self.in_split(id) && !self.is_floating(id) {
             add(
@@ -3242,6 +3285,7 @@ fn main_menu() -> gio::Menu {
     tabs.append(Some("Nueva pestaña"), Some("win.new-tab"));
     tabs.append(Some("Reabrir pestaña cerrada"), Some("win.reopen-tab"));
     tabs.append(Some("Limpiar pestañas sin anclar"), Some("win.clear-tabs"));
+    tabs.append(Some("Volver a la página anclada"), Some("win.return-home"));
     tabs.append(
         Some("Nueva ventana privada"),
         Some("app.new-private-window"),

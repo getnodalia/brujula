@@ -23,6 +23,23 @@ pub struct Tab {
     /// The essential this page belongs to (see `essentials`): it is not in the list of tabs, the
     /// essential's icon is its tab. `None` for any other tab.
     pub essential: Option<u32>,
+    /// The page a pinned tab was pinned on, as in Arc: wherever the tab goes from there, one
+    /// click brings it back. `None` for tabs that are not pinned (and for a pinned page that is
+    /// not a website).
+    pub home: Option<String>,
+}
+
+/// Whether `url` is an address a pinned tab can come back to.
+fn is_web(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
+/// Two addresses of the same page: a `#fragment` and a trailing `/` do not make it another.
+pub fn same_page(a: &str, b: &str) -> bool {
+    fn plain(u: &str) -> &str {
+        u.split('#').next().unwrap_or(u).trim_end_matches('/')
+    }
+    plain(a) == plain(b)
 }
 
 /// What a change to the model means for the UI.
@@ -178,6 +195,7 @@ impl TabModel {
                 folder: None,
                 active: 0,
                 essential,
+                home: None,
             },
         );
         let mut changes = vec![Change::Opened(id)];
@@ -296,9 +314,43 @@ impl TabModel {
         }
         let mut tab = self.tabs.remove(pos);
         tab.pinned = pinned;
+        // Pinning keeps the page it was pinned on; unpinning forgets it.
+        tab.home = if pinned && is_web(&tab.url) {
+            Some(tab.url.clone())
+        } else {
+            None
+        };
         let at = self.pinned_count();
         self.tabs.insert(at, tab);
         vec![Change::Moved(id), Change::Updated(id)]
+    }
+
+    /// Makes the page the tab shows now the one it comes back to (a pinned tab only).
+    pub fn set_home_here(&mut self, id: TabId) -> Vec<Change> {
+        self.update(id, |t| {
+            if t.pinned && is_web(&t.url) {
+                t.home = Some(t.url.clone());
+            }
+        })
+    }
+
+    /// Restores the page a pinned tab came back to from the session. Anything but a website
+    /// address is ignored, so a session file cannot make a tab return to `file:` or `javascript:`.
+    pub fn restore_home(&mut self, id: TabId, home: Option<&str>) -> Vec<Change> {
+        let home = home.filter(|h| is_web(h)).map(str::to_owned);
+        self.update(id, |t| {
+            if t.pinned && home.is_some() {
+                t.home = home;
+            }
+        })
+    }
+
+    /// The page to bring `id` back to, when it has wandered off: a pinned tab that is not on its
+    /// page any more. `None` when there is nowhere to go or it is already there.
+    pub fn home_to_return_to(&self, id: TabId) -> Option<&str> {
+        let t = self.get(id)?;
+        let home = t.home.as_deref().filter(|_| t.pinned)?;
+        (!same_page(home, &t.url)).then_some(home)
     }
 
     /// Moves a tab to `to`, but never across the pinned/unpinned boundary.
@@ -538,6 +590,50 @@ mod tests {
         m.set_pinned(ids[2], false);
         assert_eq!(m.tabs()[0].id, ids[3]);
         assert_eq!(m.position(ids[2]), Some(1));
+    }
+
+    #[test]
+    fn a_pinned_tab_comes_back_to_the_page_it_was_pinned_on() {
+        let (mut m, ids) = model(2);
+        let a = ids[0];
+        m.set_pinned(a, true);
+        assert_eq!(m.get(a).unwrap().home.as_deref(), Some("https://e0.com"));
+        assert_eq!(m.home_to_return_to(a), None, "already there");
+        m.update(a, |t| t.url = "https://e0.com/otra".into());
+        assert_eq!(m.home_to_return_to(a), Some("https://e0.com"));
+        // A fragment or a trailing slash is the same page.
+        m.update(a, |t| t.url = "https://e0.com/#x".into());
+        assert_eq!(m.home_to_return_to(a), None);
+        // Making the current page the new one.
+        m.update(a, |t| t.url = "https://e0.com/otra".into());
+        m.set_home_here(a);
+        assert_eq!(m.home_to_return_to(a), None);
+        assert_eq!(
+            m.get(a).unwrap().home.as_deref(),
+            Some("https://e0.com/otra")
+        );
+        // An unpinned tab has no page to come back to, and forgets it.
+        assert_eq!(m.home_to_return_to(ids[1]), None);
+        m.set_pinned(a, false);
+        assert_eq!(m.get(a).unwrap().home, None);
+        assert!(m.set_home_here(a).is_empty());
+    }
+
+    #[test]
+    fn only_websites_are_a_home() {
+        let mut m = TabModel::new();
+        let (a, _) = m.open("about:blank", None, false);
+        m.set_pinned(a, true);
+        assert_eq!(m.get(a).unwrap().home, None);
+        m.restore_home(a, Some("javascript:alert(1)"));
+        m.restore_home(a, Some("file:///etc/passwd"));
+        assert_eq!(m.get(a).unwrap().home, None);
+        m.restore_home(a, Some("https://ok.com"));
+        assert_eq!(m.get(a).unwrap().home.as_deref(), Some("https://ok.com"));
+        // Unpinned tabs do not take one from a file.
+        let (b, _) = m.open("https://b.com", None, false);
+        m.restore_home(b, Some("https://ok.com"));
+        assert_eq!(m.get(b).unwrap().home, None);
     }
 
     #[test]
