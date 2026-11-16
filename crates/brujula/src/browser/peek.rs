@@ -114,6 +114,36 @@ impl Browser {
             return;
         }
         self.close_peek();
+        let view = self.card_view();
+        let this = Rc::downgrade(self);
+        view.connect_title_notify(move |v| {
+            if let Some(b) = this.upgrade() {
+                let title = v.title().map(|t| t.to_string()).unwrap_or_default();
+                let shown = if title.is_empty() {
+                    v.uri().map(|u| u.to_string()).unwrap_or_default()
+                } else {
+                    title
+                };
+                b.peek.title.set_text(&shown);
+            }
+        });
+        let this = Rc::downgrade(self);
+        view.connect_load_changed(move |v, ev| {
+            if let (Some(b), LoadEvent::Finished) = (this.upgrade(), ev) {
+                hide_elements(&b.filters, v);
+            }
+        });
+        self.peek.title.set_text(uri);
+        self.peek.card.append(&view);
+        self.peek.layer.set_visible(true);
+        view.load_uri(uri);
+        view.grab_focus();
+        *self.peek_view.borrow_mut() = Some(view);
+    }
+
+    /// A page for a card or a small window: the tabs' network session and blocker, as locked down
+    /// as a tab (`harden`), no new windows, and only web addresses.
+    pub(super) fn card_view(self: &Rc<Self>) -> WebView {
         let view = WebView::builder()
             .network_session(&self.session)
             .user_content_manager(&self.ucm)
@@ -143,30 +173,7 @@ impl Browser {
             }
             false
         });
-        let this = Rc::downgrade(self);
-        view.connect_title_notify(move |v| {
-            if let Some(b) = this.upgrade() {
-                let title = v.title().map(|t| t.to_string()).unwrap_or_default();
-                let shown = if title.is_empty() {
-                    v.uri().map(|u| u.to_string()).unwrap_or_default()
-                } else {
-                    title
-                };
-                b.peek.title.set_text(&shown);
-            }
-        });
-        let this = Rc::downgrade(self);
-        view.connect_load_changed(move |v, ev| {
-            if let (Some(b), LoadEvent::Finished) = (this.upgrade(), ev) {
-                hide_elements(&b.filters, v);
-            }
-        });
-        self.peek.title.set_text(uri);
-        self.peek.card.append(&view);
-        self.peek.layer.set_visible(true);
-        view.load_uri(uri);
-        view.grab_focus();
-        *self.peek_view.borrow_mut() = Some(view);
+        view
     }
 
     pub(super) fn close_peek(&self) {

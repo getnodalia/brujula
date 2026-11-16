@@ -63,6 +63,7 @@ mod folders;
 mod history;
 mod history_panel;
 mod import;
+mod mini;
 mod notes;
 mod page_action;
 mod pagetools;
@@ -180,6 +181,11 @@ pub fn present_private(app: &gtk::Application, urls: &[String]) {
 pub fn present(app: &gtk::Application, urls: &[String]) {
     let existing = BROWSER.with(|b| b.borrow().clone());
     if let Some(b) = existing {
+        // Only the small window is open: the next link goes there too.
+        if b.wants_mini(urls) {
+            b.open_mini(&urls[0]);
+            return;
+        }
         b.window.present();
         // A link from another application: a card over the page first, like Arc's Little Arc.
         let quick = b.settings.borrow().quick_links;
@@ -198,6 +204,12 @@ pub fn present(app: &gtk::Application, urls: &[String]) {
     }
     let browser = Browser::new(app, false);
     BROWSER.with(|b| *b.borrow_mut() = Some(browser.clone()));
+    // Brújula was opened by a link from another application: a small window with just the page
+    // (Little Arc), and the full window only if it is asked for.
+    if browser.wants_mini(urls) {
+        browser.start_with(&[], Some(urls[0].clone()));
+        return;
+    }
     browser.start(urls);
     browser.window.present();
 }
@@ -370,6 +382,8 @@ pub struct Browser {
     /// The card that shows a link in a preview, and the page in it.
     peek: peek::PeekCard,
     peek_view: RefCell<Option<WebView>>,
+    /// The small window of a link that opened Brújula (Little Arc), and its page.
+    mini: RefCell<Option<mini::MiniWindow>>,
     /// The two tabs shown side by side, and the `Paned` that holds their pages.
     paired: RefCell<Option<(TabId, TabId)>>,
     split_paned: gtk::Paned,
@@ -838,6 +852,7 @@ impl Browser {
             drm_told: RefCell::new(std::collections::HashSet::new()),
             peek,
             peek_view: RefCell::new(None),
+            mini: RefCell::new(None),
             paired: RefCell::new(None),
             split_paned,
             archive: RefCell::new(
@@ -1457,6 +1472,11 @@ impl Browser {
     }
 
     fn start(self: &Rc<Self>, urls: &[String]) {
+        self.start_with(urls, None);
+    }
+
+    /// Like `start`; with `mini`, the page is shown in the small window once the blocker is in.
+    fn start_with(self: &Rc<Self>, urls: &[String], mini: Option<String>) {
         let this = self.clone();
         let urls = urls.to_vec();
         glib::spawn_future_local(async move {
@@ -1472,6 +1492,9 @@ impl Browser {
                 this.start_passkeys();
             }
             this.restore(&urls);
+            if let Some(uri) = mini {
+                this.open_mini(&uri);
+            }
             if !this.private {
                 this.start_sync();
                 this.start_archiving();
