@@ -19,6 +19,8 @@ pub enum Action {
     Ask(String),
     /// Run a command of the window (`win.find`); see `commands`.
     Command(String),
+    /// Copy this text (the answer of the calculator).
+    Copy(String),
 }
 
 /// Where a suggestion comes from, so the Spotlight can pick its icon.
@@ -30,6 +32,10 @@ pub enum Kind {
     Bookmark,
     History,
     Setting,
+    /// A search inside a site, from its short name (`yt gatos`).
+    Site,
+    /// The answer to a sum the user typed.
+    Calc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +102,14 @@ pub fn suggestions(
     suggestions_with_history(query, tabs, bookmarks, &[], search_template)
 }
 
+/// How many rows at the start of `list` are quick answers (a search inside a site, a sum). Whatever
+/// the Spotlight puts first, like the assistant's row, goes after them: Enter on `2+2` copies 4.
+pub fn quick_answers(list: &[Suggestion]) -> usize {
+    list.iter()
+        .take_while(|s| matches!(s.kind, Kind::Site | Kind::Calc))
+        .count()
+}
+
 /// Like [`suggestions`], with the pages visited before as one more source: they come after the
 /// bookmarks, and never repeat a page that is a tab, a bookmark or what was typed.
 pub fn suggestions_with_history(
@@ -122,6 +136,23 @@ pub fn suggestions_with_history(
             .collect();
     }
 
+    // Quick answers go first: a search inside a site and the result of a calculation.
+    if let Some(hit) = crate::quick::site_search(q) {
+        out.push(Suggestion {
+            kind: Kind::Site,
+            action: Action::Go(hit.url),
+            title: format!("Buscar «{}» en {}", hit.query, hit.name),
+            detail: hit.name.to_owned(),
+        });
+    }
+    if let Some(c) = crate::quick::calculate(q) {
+        out.push(Suggestion {
+            kind: Kind::Calc,
+            action: Action::Copy(c.result.clone()),
+            title: format!("= {}", c.result),
+            detail: format!("{} · Intro para copiar", c.expression),
+        });
+    }
     if let Some(url) = omnibox::resolve(q, search_template) {
         let is_search = !omnibox::looks_like_address(q);
         out.push(Suggestion {
@@ -229,6 +260,28 @@ mod tests {
     }
 
     const T: &str = ENGINES[0].template;
+
+    #[test]
+    fn a_site_keyword_and_a_sum_come_before_the_typed_search() {
+        let s = suggestions("yt gatos", &[], &[], "https://duckduckgo.com/?q=%s");
+        assert_eq!(s[0].kind, Kind::Site);
+        assert_eq!(s[0].title, "Buscar «gatos» en YouTube");
+        assert!(matches!(&s[0].action, Action::Go(u) if u.contains("youtube.com")));
+        assert_eq!(
+            s[1].kind,
+            Kind::Typed,
+            "the normal search stays as the next row"
+        );
+        let s = suggestions("2+2*3", &[], &[], "https://duckduckgo.com/?q=%s");
+        assert_eq!(s[0].kind, Kind::Calc);
+        assert_eq!(s[0].title, "= 8");
+        assert_eq!(s[0].action, Action::Copy("8".into()));
+        // A plain address or word has neither.
+        let s = suggestions("example.com", &[], &[], "https://duckduckgo.com/?q=%s");
+        assert!(s
+            .iter()
+            .all(|x| x.kind != Kind::Site && x.kind != Kind::Calc));
+    }
 
     #[test]
     fn blank_query_offers_nothing() {
@@ -379,5 +432,15 @@ mod tests {
             .map(|i| tab(i, "Rust", &format!("https://r{i}.com/")))
             .collect();
         assert_eq!(suggestions("rust", &tabs, &[], T).len(), 1 + MAX_TABS);
+    }
+
+    #[test]
+    fn quick_answers_are_counted_from_the_top() {
+        let list = suggestions("2+2", &[], &[], "https://x.test/?q=%s");
+        assert_eq!(quick_answers(&list), 1);
+        let list = suggestions("yt gatos", &[], &[], "https://x.test/?q=%s");
+        assert_eq!(quick_answers(&list), 1);
+        let list = suggestions("hola mundo", &[], &[], "https://x.test/?q=%s");
+        assert_eq!(quick_answers(&list), 0);
     }
 }

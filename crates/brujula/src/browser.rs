@@ -2918,56 +2918,60 @@ impl Browser {
         let history = self.history.borrow();
         let visited = history.search(text, 8);
         let ask = self.ai_search_row(text);
-        let items = suggest::suggestions_with_history(
+        let found = suggest::suggestions_with_history(
             text,
             &tabs,
             marks.items(),
             &visited,
             settings.search_template(),
-        )
-        .into_iter()
-        .map(|s| {
-            let texture = match &s.action {
-                Action::Go(url) => favicons::lookup(url),
-                Action::SwitchTab(id) => views
-                    .get(id)
-                    .and_then(|v| v.favicon())
-                    .or_else(|| model.get(*id).and_then(|t| favicons::lookup(&t.url))),
-                _ => None,
-            };
-            let icon = match (&s.kind, &s.action) {
-                (Kind::Typed, Action::Search(_)) => "ndl-search-symbolic",
-                (Kind::Bookmark, _) => "ndl-bookmark-symbolic",
-                (Kind::History, _) if nodalia_gtk::has_icon("ndl-history-symbolic") => {
-                    "ndl-history-symbolic"
+        );
+        let quick = suggest::quick_answers(&found);
+        let items = found
+            .into_iter()
+            .map(|s| {
+                let texture = match &s.action {
+                    Action::Go(url) => favicons::lookup(url),
+                    Action::SwitchTab(id) => views
+                        .get(id)
+                        .and_then(|v| v.favicon())
+                        .or_else(|| model.get(*id).and_then(|t| favicons::lookup(&t.url))),
+                    _ => None,
+                };
+                let icon = match (&s.kind, &s.action) {
+                    (Kind::Typed, Action::Search(_)) => "ndl-search-symbolic",
+                    (Kind::Bookmark, _) => "ndl-bookmark-symbolic",
+                    (Kind::History, _) if nodalia_gtk::has_icon("ndl-history-symbolic") => {
+                        "ndl-history-symbolic"
+                    }
+                    (Kind::Setting, _) => "ndl-settings-symbolic",
+                    (Kind::Calc, _) => "ndl-plus-symbolic",
+                    (Kind::Site, _) => "ndl-search-symbolic",
+                    _ => "ndl-globe-symbolic",
+                };
+                let title = match (&s.kind, &s.action) {
+                    (Kind::Typed, Action::Search(q)) => {
+                        format!("Buscar con {}: {q}", engine.name)
+                    }
+                    (Kind::Typed, _) => format!("Ir a {}", s.title),
+                    _ => s.title.clone(),
+                };
+                let detail = if s.kind == Kind::Typed {
+                    match &s.action {
+                        Action::Go(url) => url.clone(),
+                        _ => String::new(),
+                    }
+                } else {
+                    s.detail.clone()
+                };
+                Item {
+                    title,
+                    detail,
+                    icon,
+                    texture,
+                    action: s.action,
                 }
-                (Kind::Setting, _) => "ndl-settings-symbolic",
-                _ => "ndl-globe-symbolic",
-            };
-            let title = match (&s.kind, &s.action) {
-                (Kind::Typed, Action::Search(q)) => {
-                    format!("Buscar con {}: {q}", engine.name)
-                }
-                (Kind::Typed, _) => format!("Ir a {}", s.title),
-                _ => s.title.clone(),
-            };
-            let detail = if s.kind == Kind::Typed {
-                match &s.action {
-                    Action::Go(url) => url.clone(),
-                    _ => String::new(),
-                }
-            } else {
-                s.detail.clone()
-            };
-            Item {
-                title,
-                detail,
-                icon,
-                texture,
-                action: s.action,
-            }
-        })
-        .collect::<Vec<Item>>();
+            })
+            .collect::<Vec<Item>>();
         let mut items = items;
         // Commands that match what was typed (Arc's command bar), right after the first row.
         let commands: Vec<Item> = brujula_core::commands::search(text, 3)
@@ -2982,13 +2986,14 @@ impl Browser {
             .collect();
         let at = items.len().min(1);
         items.splice(at..at, commands);
-        // With the assistant running the search box, a question or a task comes first.
-        Self::with_ask(items, ask)
+        // With the assistant running the search box, a question or a task comes first, after the
+        // quick answers: Enter on `2+2` copies 4 and `yt gatos` opens YouTube.
+        Self::with_ask(items, ask, quick)
     }
 
-    fn with_ask(mut items: Vec<Item>, ask: Option<Item>) -> Vec<Item> {
+    fn with_ask(mut items: Vec<Item>, ask: Option<Item>, quick: usize) -> Vec<Item> {
         if let Some(a) = ask {
-            items.insert(0, a);
+            items.insert(quick.min(items.len()), a);
         }
         items
     }
@@ -3003,6 +3008,11 @@ impl Browser {
             Action::Go(url) => self.navigate(&url),
             Action::Settings(section) => self.open_settings(Some(&section)),
             Action::Ask(text) => self.ai_ask(&text),
+            Action::Copy(text) => {
+                self.window.clipboard().set_text(&text);
+                self.toast
+                    .flash("ndl-check-symbolic", &format!("Copiado: {text}"));
+            }
             Action::Command(name) => {
                 // After the Spotlight has gone, so the focus lands where the command works.
                 let window = self.window.clone();
