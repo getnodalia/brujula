@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn deleted_spaces_take_their_rules_with_them_and_files_are_read_forgivingly() {
-        let (spaces, work) = spaces();
+        let (mut spaces, work) = spaces();
         let mut r = Routes::default();
         r.set("a.org", work, &spaces);
         r.set("b.org", spaces.all()[0].id, &spaces);
