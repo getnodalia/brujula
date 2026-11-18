@@ -543,6 +543,8 @@ pub struct Extras {
     pub status: String,
     /// Archived tabs: address and title.
     pub archived: Vec<(String, String)>,
+    /// Link rules: site and the id of the space where its links open.
+    pub routes: Vec<(String, u32)>,
     /// Boosts, one card each.
     pub boosts: Vec<BoostView>,
     /// The Chromium extensions that are installed.
@@ -632,6 +634,7 @@ history|Historial|Historial|Las páginas que visitas, guardadas solo en este equ
 passwords|Contraseñas|Contraseñas|Se guardan cifradas con una contraseña maestra, solo en este equipo. No se sincronizan ni se usan en ventanas privadas.|lock
 import|Importar|Importar de otro navegador|Trae tus marcadores, historial, cookies y contraseñas de otro navegador de este equipo, o de un archivo. Lo que ya tienes no se borra.|archive
 webapps|Aplicaciones web|Aplicaciones web|Un sitio en su propia ventana, con su icono en el lanzador y su propio perfil. También desde el menú, con «Instalar como aplicación web…».|globe
+routes|Enlaces|Enrutador de enlaces|Elige en qué espacio se abre un enlace según su sitio, como Air Traffic Control de Arc. Vale para los enlaces que llegan de otras aplicaciones; lo que pulsas dentro de Brújula no cambia.|workspace
 boosts|Boosts|Boosts|Cambia el aspecto de un sitio: modo oscuro y tu propio CSS. Solo estilo, nunca scripts. Para ganar al CSS de la web, termina cada regla con !important.|sparkle
 ai|IA|Inteligencia artificial|Un asistente opcional que responde y puede ayudarte con tus pestañas, con tu propia clave. Está apagado hasta que lo actives.|sparkle
 extensions|Extensiones|Extensiones|Extensiones de Chromium: instálalas desde una carpeta, un archivo .crx o la Chrome Web Store. Funcionan con scripts de página, ventanas emergentes, segundo plano y reglas de bloqueo; no todas funcionarán.|blocks
@@ -708,6 +711,46 @@ pub struct BoostView {
     pub fg: String,
     /// The selectors hidden with Zap.
     pub hidden: Vec<String>,
+}
+
+/// The link rules: a form to add one, and the list.
+fn routes_section(view: &Extras, spaces: &Spaces) -> String {
+    let options: String = spaces
+        .all()
+        .iter()
+        .map(|sp| format!(r#"<option value="{}">{}</option>"#, sp.id, escape(&sp.name)))
+        .collect();
+    let add = stacked(
+        "Añadir una regla",
+        "El sitio (como github.com, vale también para sus subdominios) y el espacio donde se abren sus enlaces.",
+        &format!(
+            r#"<div class="addrow"><input type="text" id="route-host" class="field wide" placeholder="sitio.com" maxlength="120" aria-label="Sitio"><select class="field" id="route-space" aria-label="Espacio">{options}</select><button type="button" class="seg plain" data-addroute="1">Añadir</button></div>"#
+        ),
+    );
+    let rules: String = view
+        .routes
+        .iter()
+        .map(|(site, space)| {
+            let name = spaces
+                .get(*space)
+                .map_or_else(|| "(sin espacio)".to_owned(), |sp| sp.name.clone());
+            let s = escape(site);
+            format!(
+                r#"<div class="row"><div class="what"><b>{s}</b><p>Se abre en {}</p></div><div class="ctl"><button type="button" class="seg plain danger" data-k="route.remove" data-v="{s}" data-remove="1">Quitar</button></div></div>"#,
+                escape(&name)
+            )
+        })
+        .collect();
+    let none = if view.routes.is_empty() {
+        row(
+            "Sin reglas",
+            "Los enlaces de otras aplicaciones se abren donde estés.",
+            "",
+        )
+    } else {
+        String::new()
+    };
+    section("routes", &format!("{add}{rules}{none}"))
 }
 
 /// The boosts: a form to add a site, and one card for each.
@@ -1808,6 +1851,7 @@ pub fn render(s: &Settings, marks: &Bookmarks, spaces: &Spaces, sync: &Extras) -
     let sync_section = sync_section(s, sync);
     let archive_section = archive_section(s, sync);
     let boosts_section = boosts_section(sync);
+    let routes_section = routes_section(sync, spaces);
     let history_section = history_section(s, sync);
     let passwords_section = passwords_section(s, sync);
     let import_section = import_section(sync);
@@ -1891,7 +1935,7 @@ pub fn render(s: &Settings, marks: &Bookmarks, spaces: &Spaces, sync: &Extras) -
 <body style="--accent:{accent};--on-accent:{on_accent}">
 <div class="shell">
 <nav class="nav" aria-label="Secciones"><h1>Preferencias</h1>{nav}</nav>
-<main>{general}{appearance}{layout_section}{spaces_section}{profiles_section}{essentials_section}{bookmarks_section}{history_section}{passwords_section}{import_section}{webapps_section}{boosts_section}{ai_section}{extensions_section}{archive_section}{sync_section}{privacy}{sites}{security}{about}</main>
+<main>{general}{appearance}{layout_section}{spaces_section}{profiles_section}{essentials_section}{bookmarks_section}{history_section}{passwords_section}{import_section}{webapps_section}{routes_section}{boosts_section}{ai_section}{extensions_section}{archive_section}{sync_section}{privacy}{sites}{security}{about}</main>
 </div>
 <script>{js}</script>
 </body></html>
@@ -1923,7 +1967,8 @@ Perfiles|perfil perfiles usuario usuarios personas contraseña selector cuenta a
 Esenciales|esenciales fijos iconos barra lateral atajos sitios rápidos|essentials
 Aplicaciones web|webapp webapps aplicaciones web instalar pwa ventana lanzador atajo|webapps
 Contraseñas|contraseñas claves login usuario guardar rellenar maestra bóveda cifrado|passwords
-Boosts|boost estilo css modo oscuro sitio aspecto personalizar|boosts
+Enrutador de enlaces|enlaces rutas reglas espacio air traffic control atc abrir sitio otras aplicaciones|routes
+Boosts|boost estilo css modo oscuro sitio aspecto personalizar zap ocultar elemento fuente colores|boosts
 Inteligencia artificial|ia ai inteligencia artificial asistente chatgpt openai claude anthropic gemini ollama gpt llm modelo clave api chat|ai
 Extensiones|extensiones chrome chromium complementos plugins addons instalar crx|extensions
 Archivo de pestañas|archivar archivo pestañas antiguas cerradas recuperar|archive
@@ -2077,6 +2122,8 @@ document.addEventListener('click',e=>{
   if(nav){e.preventDefault();show(nav.getAttribute('href').slice(1));return}
   const add=e.target.closest('[data-addboost]');
   if(add){const h=document.getElementById('boost-host');if(h&&h.value.trim())send('boost.add',h.value.trim());return}
+  const rt=e.target.closest('[data-addroute]');
+  if(rt){const h=document.getElementById('route-host'),sp=document.getElementById('route-space');if(h&&h.value.trim()&&sp){send('route.add',h.value.trim()+'\n'+sp.value);h.value=''}return}
   const es=e.target.closest('[data-addessential]');
   if(es){const u=document.getElementById('essential-url'),n=document.getElementById('essential-name');if(u&&u.value.trim()){send('essential.add',u.value.trim()+'\n'+(n?n.value.trim():''));u.value='';if(n)n.value=''}return}
   const pf=e.target.closest('[data-addprofile]');
@@ -2440,6 +2487,23 @@ mod tests {
         assert!(html.contains("Elementos ocultos (2)"));
         assert!(html.contains("&lt;/code&gt;&lt;script&gt;y()"));
         assert!(!html.contains("<script>y()"));
+    }
+
+    #[test]
+    fn link_rules_are_listed_with_their_space_and_escaped() {
+        let mut spaces = Spaces::default();
+        let work = spaces.add("Trabajo <b>").unwrap();
+        let view = Extras {
+            routes: vec![("github.com".into(), work), ("</code>x.org".into(), 999)],
+            ..Extras::default()
+        };
+        let html = render(&Settings::default(), &Bookmarks::default(), &spaces, &view);
+        assert!(html.contains(r#"data-k="route.remove" data-v="github.com""#));
+        assert!(html.contains("Se abre en Trabajo &lt;b&gt;"));
+        assert!(html.contains("(sin espacio)"));
+        assert!(html.contains("&lt;/code&gt;x.org"));
+        assert!(html.contains(r#"id="route-host""#) && html.contains(r#"data-addroute"#));
+        assert!(html.contains(r#"data-nav="routes""#));
     }
 
     #[test]

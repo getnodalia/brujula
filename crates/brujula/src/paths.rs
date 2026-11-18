@@ -136,6 +136,10 @@ pub fn zoom_file() -> PathBuf {
     data_dir().join("zoom.json")
 }
 
+pub fn routes_file() -> PathBuf {
+    data_dir().join("routes.json")
+}
+
 pub fn boosts_file() -> PathBuf {
     data_dir().join("boosts.json")
 }
