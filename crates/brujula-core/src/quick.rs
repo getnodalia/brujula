@@ -5,79 +5,40 @@ use url::Url;
 
 /// A site that can be searched from the Spotlight: what to type first, its name, and the search
 /// address with `%s` for the query.
+#[derive(Debug, Clone, Copy)]
 pub struct SiteSearch {
     pub keyword: &'static str,
     pub name: &'static str,
     pub template: &'static str,
 }
 
-pub const SITES: &[SiteSearch] = &[
-    SiteSearch {
-        keyword: "yt",
-        name: "YouTube",
-        template: "https://www.youtube.com/results?search_query=%s",
-    },
-    SiteSearch {
-        keyword: "gh",
-        name: "GitHub",
-        template: "https://github.com/search?q=%s",
-    },
-    SiteSearch {
-        keyword: "w",
-        name: "Wikipedia",
-        template: "https://es.wikipedia.org/w/index.php?search=%s",
-    },
-    SiteSearch {
-        keyword: "mdn",
-        name: "MDN",
-        template: "https://developer.mozilla.org/es/search?q=%s",
-    },
-    SiteSearch {
-        keyword: "so",
-        name: "Stack Overflow",
-        template: "https://stackoverflow.com/search?q=%s",
-    },
-    SiteSearch {
-        keyword: "hn",
-        name: "Hacker News",
-        template: "https://hn.algolia.com/?q=%s",
-    },
-    SiteSearch {
-        keyword: "arch",
-        name: "Arch Wiki",
-        template: "https://wiki.archlinux.org/index.php?search=%s",
-    },
-    SiteSearch {
-        keyword: "aur",
-        name: "AUR",
-        template: "https://aur.archlinux.org/packages?K=%s",
-    },
-    SiteSearch {
-        keyword: "crates",
-        name: "crates.io",
-        template: "https://crates.io/search?q=%s",
-    },
-    SiteSearch {
-        keyword: "npm",
-        name: "npm",
-        template: "https://www.npmjs.com/search?q=%s",
-    },
-    SiteSearch {
-        keyword: "mapa",
-        name: "OpenStreetMap",
-        template: "https://www.openstreetmap.org/search?query=%s",
-    },
-    SiteSearch {
-        keyword: "rae",
-        name: "Diccionario de la RAE",
-        template: "https://dle.rae.es/srv/search?w=%s",
-    },
-    SiteSearch {
-        keyword: "amazon",
-        name: "Amazon",
-        template: "https://www.amazon.es/s?k=%s",
-    },
-];
+/// One site per line: `keyword|name|address`. A table of data, not of repeated literals.
+const TABLE: &str = "\
+yt|YouTube|https://www.youtube.com/results?search_query=%s
+gh|GitHub|https://github.com/search?q=%s
+w|Wikipedia|https://es.wikipedia.org/w/index.php?search=%s
+mdn|MDN|https://developer.mozilla.org/es/search?q=%s
+so|Stack Overflow|https://stackoverflow.com/search?q=%s
+hn|Hacker News|https://hn.algolia.com/?q=%s
+arch|Arch Wiki|https://wiki.archlinux.org/index.php?search=%s
+aur|AUR|https://aur.archlinux.org/packages?K=%s
+crates|crates.io|https://crates.io/search?q=%s
+npm|npm|https://www.npmjs.com/search?q=%s
+mapa|OpenStreetMap|https://www.openstreetmap.org/search?query=%s
+rae|Diccionario de la RAE|https://dle.rae.es/srv/search?w=%s
+amazon|Amazon|https://www.amazon.es/s?k=%s";
+
+/// The sites that can be searched by their short name.
+pub fn sites() -> impl Iterator<Item = SiteSearch> {
+    TABLE.lines().filter_map(|line| {
+        let mut parts = line.splitn(3, '|');
+        Some(SiteSearch {
+            keyword: parts.next()?,
+            name: parts.next()?,
+            template: parts.next()?,
+        })
+    })
+}
 
 /// A search inside a site: `yt gatos` becomes the results page of YouTube for «gatos».
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,7 +57,7 @@ pub fn site_search(text: &str) -> Option<SiteHit> {
         return None;
     }
     let word = word.to_lowercase();
-    let site = SITES.iter().find(|s| s.keyword == word)?;
+    let site = sites().find(|s| s.keyword == word)?;
     let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
     let url = Url::parse(&site.template.replace("%s", &encoded)).ok()?;
     Some(SiteHit {
@@ -303,7 +264,7 @@ mod tests {
     #[test]
     fn the_table_is_https_with_a_query_and_no_repeated_keyword() {
         let mut seen = std::collections::HashSet::new();
-        for s in SITES {
+        for s in sites() {
             assert!(s.template.starts_with("https://"), "{}", s.keyword);
             assert!(s.template.matches("%s").count() == 1, "{}", s.keyword);
             assert!(seen.insert(s.keyword), "{}", s.keyword);
