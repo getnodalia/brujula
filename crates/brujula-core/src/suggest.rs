@@ -102,6 +102,14 @@ pub fn suggestions(
     suggestions_with_history(query, tabs, bookmarks, &[], search_template)
 }
 
+/// How many rows at the start of `list` are quick answers (a search inside a site, a sum). Whatever
+/// the Spotlight puts first, like the assistant's row, goes after them: Enter on `2+2` copies 4.
+pub fn quick_answers(list: &[Suggestion]) -> usize {
+    list.iter()
+        .take_while(|s| matches!(s.kind, Kind::Site | Kind::Calc))
+        .count()
+}
+
 /// Like [`suggestions`], with the pages visited before as one more source: they come after the
 /// bookmarks, and never repeat a page that is a tab, a bookmark or what was typed.
 pub fn suggestions_with_history(
@@ -424,5 +432,15 @@ mod tests {
             .map(|i| tab(i, "Rust", &format!("https://r{i}.com/")))
             .collect();
         assert_eq!(suggestions("rust", &tabs, &[], T).len(), 1 + MAX_TABS);
+    }
+
+    #[test]
+    fn quick_answers_are_counted_from_the_top() {
+        let list = suggestions("2+2", &[], &[], "https://x.test/?q=%s");
+        assert_eq!(quick_answers(&list), 1);
+        let list = suggestions("yt gatos", &[], &[], "https://x.test/?q=%s");
+        assert_eq!(quick_answers(&list), 1);
+        let list = suggestions("hola mundo", &[], &[], "https://x.test/?q=%s");
+        assert_eq!(quick_answers(&list), 0);
     }
 }

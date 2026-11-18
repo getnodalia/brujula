@@ -84,6 +84,9 @@ pub fn calculate(text: &str) -> Option<Calc> {
     if expression.is_empty() || expression.chars().count() > MAX_EXPRESSION {
         return None;
     }
+    if splits_a_number(expression) {
+        return None;
+    }
     let mut p = Parser {
         chars: expression
             .chars()
@@ -120,7 +123,9 @@ pub fn calculate(text: &str) -> Option<Calc> {
 
 /// 7 stays 7 and 0.1+0.2 shows 0.3: rounded to 10 decimals, with no trailing zeros.
 fn format_number(v: f64) -> String {
-    if v.abs() >= 1e15 {
+    // Very large and very small magnitudes keep their digits in scientific notation: ten
+    // decimals would show 1/100000000000 as 0.
+    if v.abs() >= 1e15 || (v != 0.0 && v.abs() < 1e-10) {
         return format!("{v:e}");
     }
     let s = format!("{v:.10}");
@@ -130,6 +135,25 @@ fn format_number(v: f64) -> String {
     } else {
         s.to_owned()
     }
+}
+
+/// `1 2+3` is not `15`: spaces may sit around an operator, never inside a number.
+fn splits_a_number(expression: &str) -> bool {
+    let part_of_number = |c: char| c.is_ascii_digit() || c == '.' || c == ',';
+    let mut before: Option<char> = None;
+    let mut gap = false;
+    for c in expression.chars() {
+        if c.is_whitespace() {
+            gap = true;
+            continue;
+        }
+        if gap && before.is_some_and(part_of_number) && part_of_number(c) {
+            return true;
+        }
+        gap = false;
+        before = Some(c);
+    }
+    false
 }
 
 struct Parser {
@@ -159,13 +183,13 @@ impl Parser {
         Some(value)
     }
 
-    /// `power (('*' | '/' | '%') power)*`
+    /// `unary (('*' | '/' | '%') unary)*`
     fn term(&mut self, depth: usize) -> Option<f64> {
-        let mut value = self.power(depth)?;
+        let mut value = self.unary(depth)?;
         while let Some(op @ ('*' | '/' | '%')) = self.peek() {
             self.at += 1;
             self.operations += 1;
-            let rhs = self.power(depth)?;
+            let rhs = self.unary(depth)?;
             value = match op {
                 '*' => value * rhs,
                 '/' if rhs == 0.0 => return None,
@@ -177,19 +201,23 @@ impl Parser {
         Some(value)
     }
 
-    /// `unary ('^' power)?`, right to left.
+    /// `atom ('^' unary)?`, right to left: `2^3^2` is `2^9` and `2^-2` is a quarter.
     fn power(&mut self, depth: usize) -> Option<f64> {
-        let base = self.unary(depth)?;
+        let base = self.atom(depth)?;
         if self.peek() == Some('^') {
             self.at += 1;
             self.operations += 1;
-            let exp = self.power(depth + 1)?;
+            let exp = self.unary(depth + 1)?;
             return Some(base.powf(exp));
         }
         Some(base)
     }
 
+    /// `('-' | '+')* power`: a sign applies to the whole power, so `-2^2` is `-4`.
     fn unary(&mut self, depth: usize) -> Option<f64> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
         match self.peek()? {
             '-' => {
                 self.at += 1;
@@ -199,17 +227,22 @@ impl Parser {
                 self.at += 1;
                 self.unary(depth + 1)
             }
-            '(' => {
-                self.at += 1;
-                let v = self.expression(depth + 1)?;
-                if self.peek() != Some(')') {
-                    return None;
-                }
-                self.at += 1;
-                Some(v)
-            }
-            _ => self.number(),
+            _ => self.power(depth),
         }
+    }
+
+    /// A number or an expression in brackets.
+    fn atom(&mut self, depth: usize) -> Option<f64> {
+        if self.peek()? == '(' {
+            self.at += 1;
+            let v = self.expression(depth + 1)?;
+            if self.peek() != Some(')') {
+                return None;
+            }
+            self.at += 1;
+            return Some(v);
+        }
+        self.number()
     }
 
     fn number(&mut self) -> Option<f64> {
@@ -286,6 +319,32 @@ mod tests {
         assert_eq!(calc("6×7").as_deref(), Some("42"));
         assert_eq!(calc("2x3").as_deref(), Some("6"));
         assert_eq!(calc("8÷2").as_deref(), Some("4"));
+    }
+
+    #[test]
+    fn a_sign_applies_to_the_whole_power() {
+        assert_eq!(calc("-2^2").as_deref(), Some("-4"));
+        assert_eq!(calc("(-2)^2").as_deref(), Some("4"));
+        assert_eq!(calc("2^-2").as_deref(), Some("0.25"));
+        assert_eq!(calc("2^3^2").as_deref(), Some("512"));
+        assert_eq!(calc("3*-2").as_deref(), Some("-6"));
+        assert_eq!(calc("--2+1").as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn spaces_never_join_the_parts_of_a_number() {
+        assert_eq!(calc("1 2+3"), None);
+        assert_eq!(calc("1 2 + 3"), None);
+        assert_eq!(calc("1.5 2*2"), None);
+        assert_eq!(calc("2 + 3").as_deref(), Some("5"));
+        assert_eq!(calc("  2   *   (3 + 4)  ").as_deref(), Some("14"));
+    }
+
+    #[test]
+    fn small_results_keep_their_digits() {
+        assert_eq!(calc("1/100000000000").as_deref(), Some("1e-11"));
+        assert_eq!(calc("1/1000").as_deref(), Some("0.001"));
+        assert_eq!(calc("0.1-0.1").as_deref(), Some("0"));
     }
 
     #[test]
