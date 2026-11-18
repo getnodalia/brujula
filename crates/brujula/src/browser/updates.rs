@@ -137,7 +137,7 @@ impl Browser {
             let found = gio::spawn_blocking(|| nodalia_update::check(&APP))
                 .await
                 .map_err(|_| "la comprobación se interrumpió".to_owned())
-                .and_then(|r| r.map_err(|e| e.to_string()));
+                .and_then(|r| r.map_err(|e| e.describe(nodalia_update::Language::Spanish)));
             this.update.borrow_mut().busy = false;
             if !this.private {
                 this.settings.borrow_mut().update_checked_at = now_ms();
@@ -247,7 +247,7 @@ impl Browser {
                 gio::spawn_blocking(move || nodalia_update::download(&APP, &job, |_, _| {}))
                     .await
                     .map_err(|_| "la descarga se interrumpió".to_owned())
-                    .and_then(|r| r.map_err(|e| e.to_string()));
+                    .and_then(|r| r.map_err(|e| e.describe(nodalia_update::Language::Spanish)));
             this.update.borrow_mut().busy = false;
             match result {
                 Ok(package) => {
@@ -303,7 +303,7 @@ impl Browser {
                 gio::spawn_blocking(move || nodalia_update::apply(&APP, &package, || Ok(())))
                     .await
                     .map_err(|_| "la instalación se interrumpió".to_owned())
-                    .and_then(|r| r.map_err(|e| e.to_string()));
+                    .and_then(|r| r.map_err(|e| e.describe(nodalia_update::Language::Spanish)));
             match result {
                 // The new copy is already starting; this process has nothing left to do.
                 Ok(()) => std::process::exit(0),
