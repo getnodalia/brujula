@@ -138,9 +138,15 @@ pub fn extract(zip_bytes: &[u8], dest: &Path) -> Result<(), String> {
     let mut total = 0u64;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| format!("zip: {e}"))?;
-        // `enclosed_name` is None for absolute paths and `..`.
-        let Some(rel) = file.enclosed_name() else {
-            return Err(format!("nombre peligroso en el zip: {}", file.name()));
+        // `enclosed_name` is None for `..`; newer zip versions turn an absolute path into a
+        // relative one instead, so a leading separator is refused here whatever it does.
+        let absolute = matches!(file.name_raw().first(), Some(b'/' | b'\\'));
+        let rel = file.enclosed_name().filter(|_| !absolute);
+        let Some(rel) = rel else {
+            return Err(format!(
+                "nombre peligroso en el zip: {}",
+                String::from_utf8_lossy(file.name_raw())
+            ));
         };
         let target: PathBuf = dest.join(&rel);
         if file.is_dir() {
