@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "brujula"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "base64 0.23.1",
  "brujula-core",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "brujula-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "adblock",
  "aes 0.9.4",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "brujula-passkeys"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -2225,7 +2225,7 @@ dependencies = [
 [[package]]
 name = "nodalia-update"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/danielmigueltejedor/nodalia-design?rev=78106607616f7db3eeaad90c8e0f1efac6f84684#78106607616f7db3eeaad90c8e0f1efac6f84684"
+source = "git+https://github.com/danielmigueltejedor/nodalia-design?rev=f71ade677551928eb48467f4c67d96e42267e1f3#f71ade677551928eb48467f4c67d96e42267e1f3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
