@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<meta charset="utf-8">
+<title>Prueba de Widevine (EME)</title>
+<style>body{font:16px/1.5 system-ui;margin:2rem;max-width:46rem}.ok{color:#0a7d2c}.no{color:#b3261e}pre{background:#8881;padding:1rem}</style>
+<h1>Prueba de Widevine</h1>
+<p id="ctx"></p>
+<pre id="out">Probando…</pre>
+<script>
+const out = [];
+const log = (ok, text) => out.push((ok ? "OK   " : "FALLA ") + text);
+const show = () => { document.getElementById("out").textContent = out.join("\n"); console.log("RESULTADO-DRM\n" + out.join("\n")); };
+document.getElementById("ctx").textContent = "Contexto seguro: " + window.isSecureContext;
+(async () => {
+  log(typeof navigator.requestMediaKeySystemAccess === "function", "navigator.requestMediaKeySystemAccess existe");
+  const types = {
+    "H.264 (avc1.640028)": 'video/mp4; codecs="avc1.640028"',
+    "AAC (mp4a.40.2)": 'audio/mp4; codecs="mp4a.40.2"',
+    "VP9": 'video/webm; codecs="vp9"',
+    "AV1": 'video/mp4; codecs="av01.0.05M.08"',
+    "Opus": 'audio/webm; codecs="opus"',
+  };
+  for (const [n, t] of Object.entries(types)) log(window.MediaSource && MediaSource.isTypeSupported(t), "Códec " + n);
+  try {
+    const cfg = (v, a, rob) => [{
+      initDataTypes: ["cenc", "webm"],
+      videoCapabilities: [{ contentType: v, robustness: rob }],
+      audioCapabilities: [{ contentType: a, robustness: rob }],
+    }];
+    const combos = [
+      ["VP9+Opus L3", 'video/webm; codecs="vp9"', 'audio/webm; codecs="opus"'],
+      ["H.264+AAC L3", 'video/mp4; codecs="avc1.640028"', 'audio/mp4; codecs="mp4a.40.2"'],
+    ];
+    for (const [n, v, a] of combos) {
+      try {
+        const acc = await navigator.requestMediaKeySystemAccess("com.widevine.alpha", cfg(v, a, "SW_SECURE_CRYPTO"));
+        log(true, "Widevine acepta " + n);
+        const keys = await acc.createMediaKeys();
+        log(!!keys, "createMediaKeys (" + n + ")");
+      } catch (e) { log(false, "Widevine con " + n + ": " + e.name + " " + e.message); }
+    }
+  } catch (e) { log(false, "Widevine: " + e); }
+  show();
+})();
+</script>
