@@ -15,7 +15,8 @@ for c in curl python3 tar cmake ninja g++; do
 done
 
 # 1. Buscar el CDM de Widevine de Chrome / Chromium / Edge / Brave
-cdm=""
+cdm="${WIDEVINE_DIR:-}"   # p. ej. WIDEVINE_DIR=~/.config/Vinilo/WidevineCdm/4.10.3112.0
+if [ -z "$cdm" ]; then
 for d in /opt/google/chrome/WidevineCdm /opt/google/chrome-beta/WidevineCdm /opt/microsoft/msedge/WidevineCdm \
          "$HOME"/.config/google-chrome/WidevineCdm/* "$HOME"/.config/chromium/WidevineCdm/* \
          "$HOME"/.config/BraveSoftware/Brave-Browser/WidevineCdm/*; do
@@ -23,6 +24,7 @@ for d in /opt/google/chrome/WidevineCdm /opt/google/chrome-beta/WidevineCdm /opt
   [ -f "$d/_platform_specific/linux_x64/libwidevinecdm.so" ] || [ -f "$d/libwidevinecdm.so" ] || continue
   cdm="$d"
 done
+fi
 if [ -z "$cdm" ]; then
   # Búsqueda amplia (Flatpak, Chrome en otra ruta, Brave, Vivaldi…): sube desde la biblioteca hasta el manifest.json
   while IFS= read -r so; do
@@ -31,7 +33,7 @@ if [ -z "$cdm" ]; then
     if [ -f "$d/manifest.json" ]; then cdm="$d"; fi
   done < <(find "$HOME/.config" "$HOME/.var/app" "$HOME/.local/share" /opt /usr/lib /usr/lib64 -name libwidevinecdm.so 2>/dev/null)
 fi
-if [ -z "$cdm" ]; then echo "No encuentro un WidevineCdm. Abre Chrome una vez (lo descarga) y repite."; exit 1; fi
+if [ ! -f "$cdm/manifest.json" ]; then echo "No encuentro un WidevineCdm. Abre Chrome una vez (lo descarga) y repite."; exit 1; fi
 cdm_version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$cdm/manifest.json")"
 echo "CDM: $cdm (versión $cdm_version)"
 
