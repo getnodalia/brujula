@@ -32,10 +32,10 @@ use libwebauthn::ops::webauthn::{
     RequestOrigin, RequestSettings, WebAuthnIDLResponse,
 };
 use libwebauthn::proto::CtapError;
-use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
-use libwebauthn::transport::cable::error::CableError;
-use libwebauthn::transport::cable::qr_code_device::{
-    CableQrCodeDevice, CableTransports, QrCodeOperationHint,
+use libwebauthn::transport::hybrid::channel::{HybridUxUpdate, PxpUpdate};
+use libwebauthn::transport::hybrid::error::PxpError;
+use libwebauthn::transport::hybrid::qr_code_device::{
+    PxpQrCodeDevice, PxpTransports, QrCodeOperationHint,
 };
 use libwebauthn::transport::{Channel as _, ChannelSettings, Device as _};
 use libwebauthn::webauthn::{PlatformError, WebAuthn as _, WebAuthnError};
@@ -341,7 +341,7 @@ async fn prepare(request: &Request) -> Result<Prepared, Failure> {
 
 async fn run(request: &Request, tx: &UnboundedSender<Event>) -> Result<String, Failure> {
     let prepared = prepare(request).await?;
-    if !libwebauthn::transport::cable::is_available().await {
+    if !libwebauthn::transport::hybrid::is_available().await {
         return Err(Failure::new(Reason::NoBluetooth, "no Bluetooth adapter"));
     }
     let hint = match request.kind {
@@ -350,7 +350,7 @@ async fn run(request: &Request, tx: &UnboundedSender<Event>) -> Result<String, F
     };
     // Only the tunnel server is advertised: phones that do not know the direct Bluetooth
     // channel of newer FIDO versions would refuse a code that offers it.
-    let mut device = CableQrCodeDevice::new_transient(hint, CableTransports::CloudAssistedOnly)
+    let mut device = PxpQrCodeDevice::new_transient(hint, PxpTransports::CloudAssistedOnly)
         .map_err(|e| Failure::new(Reason::Other, e.to_string()))?;
     let _ = tx.unbounded_send(Event::Qr(device.qr_code.to_string()));
     let _ = tx.unbounded_send(Event::Stage(Stage::Waiting));
@@ -364,24 +364,24 @@ async fn run(request: &Request, tx: &UnboundedSender<Event>) -> Result<String, F
     tokio::spawn(async move {
         while let Ok(update) = updates.recv().await {
             match update {
-                CableUxUpdate::CableUpdate(c) => {
+                HybridUxUpdate::PxpUpdate(c) => {
                     let stage = match c {
-                        CableUpdate::ProximityCheck => Stage::Nearby,
-                        CableUpdate::Connecting => Stage::Connecting,
-                        CableUpdate::Authenticating => Stage::Authenticating,
-                        CableUpdate::Connected => Stage::Connected,
-                        CableUpdate::Error(_) => continue,
+                        PxpUpdate::ProximityCheck => Stage::Nearby,
+                        PxpUpdate::Connecting => Stage::Connecting,
+                        PxpUpdate::Authenticating => Stage::Authenticating,
+                        PxpUpdate::Connected => Stage::Connected,
+                        PxpUpdate::Error(_) => continue,
                     };
                     let _ = stages.unbounded_send(Event::Stage(stage));
                 }
-                CableUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => {
+                HybridUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => {
                     let _ = stages.unbounded_send(Event::Stage(Stage::Touch));
                 }
                 // A phone checks the person itself; a PIN prompt here would be a computer
                 // asking for a secret the page could imitate. Ask for none.
-                CableUxUpdate::UvUpdate(UvUpdate::PinRequired(u)) => u.cancel(),
-                CableUxUpdate::UvUpdate(UvUpdate::PinNotSet(u)) => u.cancel(),
-                CableUxUpdate::UvUpdate(UvUpdate::UvRetry { .. }) => {}
+                HybridUxUpdate::UvUpdate(UvUpdate::PinRequired(u)) => u.cancel(),
+                HybridUxUpdate::UvUpdate(UvUpdate::PinNotSet(u)) => u.cancel(),
+                HybridUxUpdate::UvUpdate(UvUpdate::UvRetry { .. }) => {}
             }
         }
     });
@@ -414,7 +414,7 @@ async fn run(request: &Request, tx: &UnboundedSender<Event>) -> Result<String, F
     }
 }
 
-fn failure_of(e: WebAuthnError<CableError>) -> Failure {
+fn failure_of(e: WebAuthnError<PxpError>) -> Failure {
     let detail = e.to_string();
     let reason = match &e {
         WebAuthnError::Ctap(c) => reason_of_ctap(c),
@@ -424,7 +424,7 @@ fn failure_of(e: WebAuthnError<CableError>) -> Failure {
         }
         WebAuthnError::Platform(PlatformError::SyntaxError) => Reason::Invalid,
         WebAuthnError::Platform(_) => Reason::Other,
-        WebAuthnError::Transport(CableError::Timeout) => Reason::TimedOut,
+        WebAuthnError::Transport(PxpError::Timeout) => Reason::TimedOut,
         WebAuthnError::Transport(_) => Reason::Connection,
         _ => Reason::Other,
     };
