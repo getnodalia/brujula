@@ -186,11 +186,11 @@ fn the_ways_to_fail_become_the_errors_a_page_expects() {
 #[test]
 fn a_broken_link_is_a_connection_error_and_a_slow_one_is_a_timeout() {
     assert_eq!(
-        failure_of(WebAuthnError::Transport(CableError::ConnectionLost)).reason,
+        failure_of(WebAuthnError::Transport(PxpError::ConnectionLost)).reason,
         Reason::Connection
     );
     assert_eq!(
-        failure_of(WebAuthnError::Transport(CableError::Timeout)).reason,
+        failure_of(WebAuthnError::Transport(PxpError::Timeout)).reason,
         Reason::TimedOut
     );
     assert_eq!(

@@ -2,7 +2,7 @@
 //! secret comes as the key a site shows next to its QR code (base32, with or without spaces) or
 //! as the `otpauth://totp/...` address inside that QR code.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use url::Url;

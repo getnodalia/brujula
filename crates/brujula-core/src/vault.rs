@@ -12,8 +12,8 @@
 //!   address), never for a sibling subdomain or another scheme.
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
-use chacha20poly1305::{AeadCore, XChaCha20Poly1305, XNonce};
+use chacha20poly1305::aead::{Aead, Generate, KeyInit};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -42,6 +42,8 @@ pub enum VaultError {
     Format,
     /// The master password is too short.
     Weak,
+    /// The system could not provide random bytes.
+    Random,
 }
 
 impl std::fmt::Display for VaultError {
@@ -50,6 +52,7 @@ impl std::fmt::Display for VaultError {
             Self::Unlock => "contraseña maestra incorrecta",
             Self::Format => "el archivo de contraseñas no es válido",
             Self::Weak => "la contraseña maestra debe tener al menos 8 caracteres",
+            Self::Random => "el sistema no pudo generar datos aleatorios",
         })
     }
 }
@@ -164,8 +167,7 @@ impl Vault {
         if master.chars().count() < MIN_MASTER {
             return Err(VaultError::Weak);
         }
-        let mut salt = [0u8; 16];
-        chacha20poly1305::aead::rand_core::RngCore::fill_bytes(&mut OsRng, &mut salt);
+        let salt = <[u8; 16]>::try_generate().map_err(|_| VaultError::Random)?;
         let key = derive(master, &salt, memory, passes, lanes)?;
         Ok(Self {
             contents: Contents::default(),
@@ -230,9 +232,10 @@ impl Vault {
 
     fn unseal(file: Parsed, key: Zeroizing<[u8; 32]>) -> Result<Self, VaultError> {
         let cipher = XChaCha20Poly1305::new((&*key).into());
+        let nonce = XNonce::try_from(file.nonce.as_slice()).map_err(|_| VaultError::Format)?;
         let plain = Zeroizing::new(
             cipher
-                .decrypt(XNonce::from_slice(&file.nonce), file.data.as_ref())
+                .decrypt(&nonce, file.data.as_ref())
                 .map_err(|_| VaultError::Unlock)?,
         );
         let mut contents: Contents =
@@ -254,7 +257,10 @@ impl Vault {
     /// The text to write to the file: the vault sealed under a fresh nonce.
     pub fn seal(&self) -> String {
         let cipher = XChaCha20Poly1305::new((&*self.key).into());
-        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        // Without a fresh nonce nothing is sealed: an empty text, never a reused nonce.
+        let Ok(nonce) = chacha20poly1305::XNonce::try_generate() else {
+            return String::new();
+        };
         let plain = Zeroizing::new(serde_json::to_vec(&self.contents).unwrap_or_default());
         let data = cipher.encrypt(&nonce, plain.as_ref()).unwrap_or_default();
         serde_json::to_string(&File {
@@ -274,8 +280,7 @@ impl Vault {
         if master.chars().count() < MIN_MASTER {
             return Err(VaultError::Weak);
         }
-        let mut salt = [0u8; 16];
-        chacha20poly1305::aead::rand_core::RngCore::fill_bytes(&mut OsRng, &mut salt);
+        let salt = <[u8; 16]>::try_generate().map_err(|_| VaultError::Random)?;
         self.key = derive(master, &salt, self.memory, self.passes, self.lanes)?;
         self.salt = salt;
         Ok(())

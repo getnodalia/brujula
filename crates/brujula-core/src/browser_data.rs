@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use aes::cipher::block_padding::Pkcs7;
-use aes::cipher::{BlockDecryptMut, KeyIvInit};
+use aes::cipher::{BlockModeDecrypt, KeyIvInit};
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
 
@@ -289,7 +289,7 @@ fn decrypt(blob: &[u8], keys: &Keys) -> Option<Vec<u8>> {
     // it, so a fixed IV is the format here, not a weakness of anything this browser encrypts.
     let iv: [u8; 16] = std::array::from_fn(|_| b' '); // NOSONAR
     Aes128CbcDec::new(&key.into(), &iv.into())
-        .decrypt_padded_vec_mut::<Pkcs7>(data)
+        .decrypt_padded_vec::<Pkcs7>(data)
         .ok()
 }
 
@@ -564,15 +564,14 @@ pub fn logins_csv(text: &str) -> Result<Vec<Login>, DataError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes::cipher::BlockEncryptMut;
+    use aes::cipher::BlockModeEncrypt;
 
     type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 
     fn encrypt(prefix: &str, key: [u8; 16], plain: &[u8]) -> Vec<u8> {
         let mut out = prefix.as_bytes().to_vec();
         out.extend(
-            Aes128CbcEnc::new(&key.into(), &[b' '; 16].into())
-                .encrypt_padded_vec_mut::<Pkcs7>(plain),
+            Aes128CbcEnc::new(&key.into(), &[b' '; 16].into()).encrypt_padded_vec::<Pkcs7>(plain),
         );
         out
     }

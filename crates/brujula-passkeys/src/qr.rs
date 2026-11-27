@@ -58,9 +58,9 @@ mod tests {
 
     #[test]
     fn the_code_a_phone_has_to_scan_fits() {
-        let device = libwebauthn::transport::cable::qr_code_device::CableQrCodeDevice::new_transient(
-            libwebauthn::transport::cable::qr_code_device::QrCodeOperationHint::GetAssertionRequest,
-            libwebauthn::transport::cable::qr_code_device::CableTransports::CloudAssistedOnly,
+        let device = libwebauthn::transport::hybrid::qr_code_device::PxpQrCodeDevice::new_transient(
+            libwebauthn::transport::hybrid::qr_code_device::QrCodeOperationHint::GetAssertionRequest,
+            libwebauthn::transport::hybrid::qr_code_device::PxpTransports::CloudAssistedOnly,
         )
         .unwrap();
         let text = device.qr_code.to_string();

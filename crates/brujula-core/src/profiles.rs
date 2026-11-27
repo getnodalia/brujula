@@ -8,7 +8,7 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
+use chacha20poly1305::aead::Generate;
 use serde::{Deserialize, Serialize};
 
 use crate::avatars;
@@ -82,8 +82,7 @@ fn same(a: &[u8], b: &[u8]) -> bool {
 }
 
 fn make_lock(password: &str, memory: u32, passes: u32) -> Option<Lock> {
-    let mut rng = OsRng;
-    let salt: [u8; 16] = std::array::from_fn(|_| rng.next_u32() as u8);
+    let salt = <[u8; 16]>::try_generate().ok()?;
     let hash = derive(password, &salt, memory, passes)?;
     Some(Lock {
         salt: B64.encode(salt),
