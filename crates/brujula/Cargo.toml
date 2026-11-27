@@ -13,8 +13,8 @@ path = "src/main.rs"
 [dependencies]
 brujula-core = { path = "../brujula-core" }
 brujula-passkeys = { path = "../brujula-passkeys" }
-nodalia-gtk = { git = "https://github.com/danielmigueltejedor/nodalia-design", rev = "78106607616f7db3eeaad90c8e0f1efac6f84684" }
-nodalia-update = { git = "https://github.com/danielmigueltejedor/nodalia-design", rev = "114848a2ff1a7c29c9a5432fb12e955fbe0aeef2" }
+nodalia-gtk = { git = "https://github.com/danielmigueltejedor/nodalia-design", rev = "8bb4b7dcbf186644ab606b806569c851056cee2c" }
+nodalia-update = { git = "https://github.com/danielmigueltejedor/nodalia-design", rev = "8bb4b7dcbf186644ab606b806569c851056cee2c" }
 webkit6 = "0.6"
 soup3 = "0.9"
 serde = { version = "1", features = ["derive"] }
